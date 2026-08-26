@@ -1,0 +1,22 @@
+{
+  "name": "tunde-divat-online",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm:dev --workspace @fashion-mvp/api\" \"npm:dev --workspace @fashion-mvp/web\"",
+    "build": "npm run build --workspace @fashion-mvp/shared && npm run build --workspace @fashion-mvp/api && npm run build --workspace @fashion-mvp/web",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "prisma:generate": "npm run prisma:generate --workspace @fashion-mvp/api",
+    "prisma:migrate": "npm run prisma:migrate --workspace @fashion-mvp/api"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  }
+}

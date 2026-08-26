@@ -1,0 +1,165 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  STAFF
+}
+
+enum ProductStatus {
+  DRAFT
+  PROCESSING
+  REVIEW
+  APPROVED
+  PUBLISHED
+  ARCHIVED
+}
+
+enum ImageType {
+  ORIGINAL
+  AI_GENERATED
+  FINAL
+}
+
+enum GenerationStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id            Int       @id @default(autoincrement())
+  username      String    @unique @db.VarChar(40)
+  email         String?   @unique @db.VarChar(255)
+  passwordHash  String    @map("password_hash") @db.VarChar(255)
+  role          UserRole  @default(ADMIN)
+  products      Product[] @relation("ProductCreator")
+  reservations  Reservation[]
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model Product {
+  id             Int             @id @default(autoincrement())
+  productId      String          @map("product_id") @db.VarChar(80)
+  displayNumber  String          @map("display_number") @db.VarChar(20)
+  price          Int
+  category       String?         @db.VarChar(80)
+  color          String?         @db.VarChar(80)
+  brand          String?         @db.VarChar(80)
+  description    String?         @db.Text
+  notes          String?         @db.Text
+  targetGroup    String?         @map("target_group") @db.VarChar(80)
+  reservableUntil DateTime?      @map("reservable_until")
+  reservableDurationHours Int?   @map("reservable_duration_hours")
+  status         ProductStatus   @default(DRAFT)
+  createdBy      Int?            @map("created_by")
+  creator        User?           @relation("ProductCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  sizes          ProductSize[]
+  images         ProductImage[]
+  generationJobs GenerationJob[]
+  reservations   Reservation[]
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+
+  // MVP assumption: one supplier, so product_id is unique for now.
+  // Add supplier/supplier_id later and replace this with supplier + product_id.
+  @@unique([productId])
+  @@index([status])
+  @@index([displayNumber])
+  @@map("products")
+}
+
+model AppCounter {
+  name      String   @id @db.VarChar(80)
+  nextValue Int      @map("next_value")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("app_counters")
+}
+
+model PickupOption {
+  id           Int           @id @default(autoincrement())
+  address      String        @db.VarChar(255)
+  startAt      DateTime      @map("start_at")
+  endAt        DateTime      @map("end_at")
+  isActive     Boolean       @default(true) @map("is_active")
+  createdBy    Int?          @map("created_by")
+  reservations Reservation[]
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  @@index([isActive, startAt])
+  @@map("pickup_options")
+}
+
+model Reservation {
+  id          Int          @id @default(autoincrement())
+  productFk   Int          @map("product_fk")
+  product     Product      @relation(fields: [productFk], references: [id], onDelete: Cascade)
+  userId      Int          @map("user_id")
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pickupFk    Int          @map("pickup_fk")
+  pickup      PickupOption @relation(fields: [pickupFk], references: [id], onDelete: Restrict)
+  size        String       @db.VarChar(20)
+  quantity    Int          @default(1)
+  canCancel   Boolean      @default(true) @map("can_cancel")
+  reservedAt  DateTime     @default(now()) @map("reserved_at")
+  cancelledAt DateTime?    @map("cancelled_at")
+
+  @@index([productFk])
+  @@index([userId, cancelledAt])
+  @@index([pickupFk])
+  @@map("reservations")
+}
+
+model ProductSize {
+  id        Int      @id @default(autoincrement())
+  productFk Int      @map("product_fk")
+  product   Product  @relation(fields: [productFk], references: [id], onDelete: Cascade)
+  size      String   @db.VarChar(20)
+  quantity  Int?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([productFk, size])
+  @@map("product_sizes")
+}
+
+model ProductImage {
+  id          Int       @id @default(autoincrement())
+  productFk   Int       @map("product_fk")
+  product     Product   @relation(fields: [productFk], references: [id], onDelete: Cascade)
+  imageType   ImageType @map("image_type")
+  storagePath String    @map("storage_path") @db.VarChar(500)
+  mimeType    String    @map("mime_type") @db.VarChar(120)
+  width       Int?
+  height      Int?
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([productFk, imageType])
+  @@map("product_images")
+}
+
+model GenerationJob {
+  id           Int              @id @default(autoincrement())
+  productFk    Int              @map("product_fk")
+  product      Product          @relation(fields: [productFk], references: [id], onDelete: Cascade)
+  status       GenerationStatus @default(PENDING)
+  provider     String           @db.VarChar(80)
+  errorMessage String?          @map("error_message") @db.Text
+  createdAt    DateTime         @default(now()) @map("created_at")
+  completedAt  DateTime?        @map("completed_at")
+
+  @@index([productFk, status])
+  @@map("generation_jobs")
+}

@@ -1,4 +1,4 @@
-# Tünde Divat Online MVP
+# Tünde Divat Online MVP 
 
 Webes, API-first MVP online ruhakereskedéshez. A rendszer célja, hogy a felhasználó mobilról vagy desktopról feltöltsön/készítsen termékfotót, rögzítse a termékadatokat, AI service rétegen keresztül marketingképet generáljon, az alkalmazás saját overlay service-ével ráhelyezze a `display_number`, ár és méret információkat, majd jóváhagyás után a termék bekerüljön a Kész képek nézetbe.
 

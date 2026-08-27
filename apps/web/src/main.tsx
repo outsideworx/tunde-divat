@@ -1,6 +1,6 @@
 import { Fragment, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { Camera, Check, Download, Eye, FolderCheck, Heart, LogOut, Plus, RefreshCcw, Search, Share2, ShoppingBag, Sparkles, Trash2, Upload, X } from "lucide-react";
+import { ArrowLeft, Ban, Camera, Check, Download, Eye, FolderCheck, Heart, KeyRound, LogOut, Plus, RefreshCcw, Search, Share2, ShoppingBag, Sparkles, Trash2, Upload } from "lucide-react";
 import { allowedSizes, formatHuf } from "@fashion-mvp/shared";
 import "./styles.css";
 import { useEffect, useMemo, useState } from "react";
@@ -13,6 +13,7 @@ type ProductImage = { id: number; imageType: "ORIGINAL" | "AI_GENERATED" | "FINA
 type Product = {
   id: number;
   productId: string;
+  productName?: string | null;
   displayNumber: string;
   price: number;
   status: string;
@@ -100,7 +101,7 @@ async function imageFileForShare(product: Product, image: ProductImage, variant:
 }
 
 function productShareText(product: Product) {
-  return `#${product.displayNumber} - ${formatHuf(product.price)}\nMéretek: ${product.sizes.map((s) => s.size).join("; ")}${product.description ? `\n${product.description}` : ""}`;
+  return `${productTitle(product)} - ${formatHuf(product.price)}\nMéretek: ${product.sizes.map((s) => s.size).join("; ")}${product.description ? `\n${product.description}` : ""}`;
 }
 
 function downloadFile(filename: string, content: string, type: string) {
@@ -145,8 +146,13 @@ function formatPickupRange(pickup?: PickupOption) {
 }
 
 function productTitle(product: Product) {
-  if (product.description) return product.description.split(/[.\n]/)[0].trim().slice(0, 48);
-  return product.category || product.brand || `#${product.displayNumber}`;
+  const name = product.productName || product.category || product.description?.split(/[.\n]/)[0].trim().slice(0, 48) || "Termék";
+  return `#${product.displayNumber} ${name}`;
+}
+
+function productIdFromPath() {
+  const match = window.location.pathname.match(/^\/product\/(\d+)$/);
+  return match ? Number(match[1]) : null;
 }
 
 function localDateAt(date: string, hour: number) {
@@ -202,20 +208,32 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [username, setUsername] = useState("admin123");
   const [password, setPassword] = useState("admin1234");
+  const [registerForm, setRegisterForm] = useState({
+    username: "",
+    last_name: "",
+    first_name: "",
+    phone: "",
+    password: "",
+    invite_code: ""
+  });
   const [error, setError] = useState("");
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setError("");
     try {
-      const res = await api<{ user: User }>("/api/auth/login", {
+      const res = await api<{ user: User }>(authMode === "login" ? "/api/auth/login" : "/api/auth/register", {
         method: "POST",
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify(authMode === "login" ? { username, password } : registerForm)
       });
       onLogin(res.user);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Sikertelen bejelentkezés");
+      setError(err instanceof Error ? err.message : "Sikertelen művelet");
     }
+  }
+
+  function setRegister<K extends keyof typeof registerForm>(key: K, value: string) {
+    setRegisterForm((current) => ({ ...current, [key]: value }));
   }
 
   return (
@@ -233,24 +251,30 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
             <button className={`tab-button ${authMode === "register" ? "active" : ""}`} type="button" onClick={() => setAuthMode("register")}>Regisztráció</button>
           </div>
           <h1>Tünde Divat Online</h1>
-          {authMode === "register" && <p className="hint">A regisztrációs folyamatot a következő körben kötjük be. Teszteléshez használd a megadott felhasználókat.</p>}
-          <label>
-            Felhasználónév
-            <input value={username} onChange={(e) => setUsername(e.target.value)} type="text" autoComplete="username" disabled={authMode === "register"} />
-          </label>
-          {authMode === "register" && (
+          {authMode === "login" ? (
             <>
-              <label>E-mail cím<input type="email" disabled /></label>
-              <label>Telefonszám<input type="tel" disabled /></label>
+              <label>
+                Felhasználónév
+                <input value={username} onChange={(e) => setUsername(e.target.value)} type="text" autoComplete="username" />
+              </label>
+              <label>
+                Jelszó
+                <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" autoComplete="current-password" />
+              </label>
+              <label className="check-row"><input type="checkbox" /> <span>Emlékezzen rám</span></label>
+            </>
+          ) : (
+            <>
+              <label>Felhasználónév<input value={registerForm.username} onChange={(e) => setRegister("username", e.target.value)} type="text" autoComplete="username" /></label>
+              <label>Vezetéknév<input value={registerForm.last_name} onChange={(e) => setRegister("last_name", e.target.value)} type="text" autoComplete="family-name" /></label>
+              <label>Keresztnév<input value={registerForm.first_name} onChange={(e) => setRegister("first_name", e.target.value)} type="text" autoComplete="given-name" /></label>
+              <label>Telefonszám<input value={registerForm.phone} onChange={(e) => setRegister("phone", e.target.value)} type="tel" autoComplete="tel" /></label>
+              <label>Jelszó<input value={registerForm.password} onChange={(e) => setRegister("password", e.target.value)} type="password" autoComplete="new-password" /></label>
+              <label>Meghívókód<input value={registerForm.invite_code} onChange={(e) => setRegister("invite_code", e.target.value)} type="text" /></label>
             </>
           )}
-          <label>
-            Jelszó
-            <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" autoComplete="current-password" disabled={authMode === "register"} />
-          </label>
-          {authMode === "login" && <label className="check-row"><input type="checkbox" /> <span>Emlékezzen rám</span></label>}
           {error && <p className="error">{error}</p>}
-          <button className="primary tdo-primary" type="submit" disabled={authMode === "register"}>{authMode === "login" ? "Bejelentkezés" : "Regisztráció hamarosan"}</button>
+          <button className="primary tdo-primary" type="submit">{authMode === "login" ? "Bejelentkezés" : "Regisztráció"}</button>
           <div className="test-users">
             <strong>Teszt belépések</strong>
             <span>Admin: admin123 / admin1234</span>
@@ -268,7 +292,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [storeView, setStoreView] = useState<StoreView>("catalog");
   const [favoriteIds, setFavoriteIds] = useState<number[]>([]);
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [detailProductId, setDetailProductId] = useState<number | null>(() => productIdFromPath());
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("");
   const [error, setError] = useState("");
@@ -294,6 +318,12 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
     setFavoriteIds(raw ? JSON.parse(raw) as number[] : []);
   }, [user.id]);
 
+  useEffect(() => {
+    const onPopState = () => setDetailProductId(productIdFromPath());
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
   async function logout() {
     await api("/api/auth/logout", { method: "POST" });
     onLogout();
@@ -302,7 +332,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
   const offerProducts = products.filter((product) => product.status === "APPROVED" && productDisplayImage(product));
   const categories = Array.from(new Set(offerProducts.map((product) => product.category).filter(Boolean) as string[]));
   const visible = offerProducts.filter((product) => {
-    const haystack = [product.displayNumber, product.productId, product.category, product.brand, product.description, product.sizes.map((s) => s.size).join(" ")]
+    const haystack = [product.displayNumber, product.productId, product.productName, product.category, product.description, product.sizes.map((s) => s.size).join(" ")]
       .filter(Boolean)
       .join(" ")
       .toLowerCase();
@@ -317,6 +347,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
   const earliestPickup = pickups
     .filter((pickup) => new Date(pickup.startAt).getTime() >= Date.now())
     .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())[0];
+  const detailProduct = detailProductId ? offerProducts.find((product) => product.id === detailProductId) : null;
 
   function toggleFavorite(product: Product) {
     setFavoriteIds((current) => {
@@ -326,11 +357,33 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
     });
   }
 
+  function openProductDetail(product: Product) {
+    window.history.pushState({}, "", `/product/${product.id}`);
+    setDetailProductId(product.id);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function closeProductDetail() {
+    window.history.pushState({}, "", "/");
+    setDetailProductId(null);
+    setStoreView("catalog");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function goToStoreView(nextView: StoreView) {
+    if (detailProductId !== null) {
+      window.history.pushState({}, "", "/");
+      setDetailProductId(null);
+    }
+    setStoreView(nextView);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   return (
     <div className="store-shell">
       <header className="store-topbar">
         <div className="store-brand-lockup">
-          <button className="logo-home-btn" onClick={() => setStoreView("catalog")}><img className="header-logo" src="/assets/tunde-divat-online-logo.jpeg" alt="Tünde Divat Online" /></button>
+          <button className="logo-home-btn" onClick={() => goToStoreView("catalog")}><img className="header-logo" src="/assets/tunde-divat-online-logo.jpeg" alt="Tünde Divat Online" /></button>
           <div className="store-user">
             <span>{user.username} | felhasználó</span>
             <strong>{storeView === "reservations" ? "Foglalásaim" : storeView === "favorites" ? "Kedvencek" : "Aktuális kínálat"}</strong>
@@ -341,15 +394,34 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
           </div>
         </div>
         <nav className="store-nav">
-          <button className={storeView === "catalog" ? "active" : ""} onClick={() => setStoreView("catalog")}>Kínálat</button>
-          <button className={storeView === "reservations" ? "active" : ""} onClick={() => setStoreView("reservations")}>Foglalásaim</button>
-          <button className={storeView === "favorites" ? "active" : ""} onClick={() => setStoreView("favorites")}>Kedvencek</button>
+          <button className={storeView === "catalog" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("catalog")}>Kínálat</button>
+          <button className={storeView === "reservations" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("reservations")}>Foglalásaim</button>
+          <button className={storeView === "favorites" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("favorites")}>Kedvencek</button>
           {onBackToAdmin && <button className="secondary" onClick={onBackToAdmin}>Vissza az adminhoz</button>}
           <button className="ghost" onClick={logout}>Kijelentkezés</button>
         </nav>
       </header>
       <main className="store-main">
-        {storeView === "reservations" ? (
+        {detailProduct ? (
+          <ProductDetailPage
+            product={detailProduct}
+            pickups={pickups}
+            reservations={reservations.filter((reservation) => reservation.productFk === detailProduct.id)}
+            isFavorite={favoriteIds.includes(detailProduct.id)}
+            earliestPickup={earliestPickup}
+            onClose={closeProductDetail}
+            onToggleFavorite={() => toggleFavorite(detailProduct)}
+            onReserved={async () => {
+              setMessage("A foglalás sikeres. Az admin felületen látszani fog, melyik átvételi időpontot választottad.");
+              await loadStoreData();
+            }}
+          />
+        ) : detailProductId ? (
+          <section className="panel empty-state">
+            <p>Ez a termék már nem elérhető.</p>
+            <button className="secondary icon-text" onClick={closeProductDetail}><ArrowLeft size={18} /> Vissza a kínálathoz</button>
+          </section>
+        ) : storeView === "reservations" ? (
           <ReservationsPage
             reservations={reservations}
             onBackToCatalog={() => setStoreView("catalog")}
@@ -373,7 +445,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
               products={favoriteProducts}
               favoriteIds={favoriteIds}
               onToggleFavorite={toggleFavorite}
-              onOpenDetail={setSelectedProduct}
+              onOpenDetail={openProductDetail}
             />
             {!favoriteProducts.length && <div className="panel empty-state">Még nincs kedvenc terméked.</div>}
           </>
@@ -393,7 +465,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
               </div>
               <label className="search-field">
                 <Search size={18} />
-                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Keresés sorszám, márka, leírás alapján" />
+                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Keresés sorszám, név, leírás alapján" />
               </label>
               <select value={category} onChange={(e) => setCategory(e.target.value)}>
                 <option value="">Összes kategória</option>
@@ -406,27 +478,12 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
               products={visible}
               favoriteIds={favoriteIds}
               onToggleFavorite={toggleFavorite}
-              onOpenDetail={setSelectedProduct}
+              onOpenDetail={openProductDetail}
             />
             {!visible.length && <div className="panel empty-state">Még nincs termék feltöltve. Hamarosan új árukészlettel jelentkezünk!</div>}
           </>
         )}
       </main>
-      {selectedProduct && (
-        <ProductDetailModal
-          product={selectedProduct}
-          pickups={pickups}
-          reservations={reservations.filter((reservation) => reservation.productFk === selectedProduct.id)}
-          isFavorite={favoriteIds.includes(selectedProduct.id)}
-          earliestPickup={earliestPickup}
-          onClose={() => setSelectedProduct(null)}
-          onToggleFavorite={() => toggleFavorite(selectedProduct)}
-          onReserved={async () => {
-            setMessage("A foglalás sikeres. Az admin felületen látszani fog, melyik átvételi időpontot választottad.");
-            await loadStoreData();
-          }}
-        />
-      )}
     </div>
   );
 }
@@ -533,7 +590,7 @@ function StoreProductCard({ product, isFavorite, onToggleFavorite, onOpenDetail 
   );
 }
 
-function ProductDetailModal({ product, pickups, reservations, isFavorite, earliestPickup, onClose, onToggleFavorite, onReserved }: {
+function ProductDetailPage({ product, pickups, reservations, isFavorite, earliestPickup, onClose, onToggleFavorite, onReserved }: {
   product: Product;
   pickups: PickupOption[];
   reservations: Reservation[];
@@ -581,9 +638,11 @@ function ProductDetailModal({ product, pickups, reservations, isFavorite, earlie
   }
 
   return (
-    <div className="product-modal-backdrop" role="dialog" aria-modal="true">
+    <section className="product-detail-page">
+      <button className="secondary icon-text detail-back-button" onClick={onClose}>
+        <ArrowLeft size={18} /> Vissza a kínálathoz
+      </button>
       <section className="product-detail">
-        <button className="modal-close" onClick={onClose} aria-label="Bezárás"><X size={22} /></button>
         <div className="product-detail-image">
           <img src={imageUrl(displayImage)} alt={`#${product.displayNumber}`} />
         </div>
@@ -623,7 +682,7 @@ function ProductDetailModal({ product, pickups, reservations, isFavorite, earlie
           </button>
         </div>
       </section>
-    </div>
+    </section>
   );
 }
 
@@ -670,9 +729,35 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
 
 function Dashboard({ onNew, onStorefront, onAi, onShare, onCurrent, onOrders }: { onNew: () => void; onStorefront: () => void; onAi: () => void; onShare: () => void; onCurrent: () => void; onOrders: () => void }) {
   const [products, setProducts] = useState<Product[]>([]);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteCode, setInviteCode] = useState("");
+  const [inviteMessage, setInviteMessage] = useState("");
+  const [inviteError, setInviteError] = useState("");
   useEffect(() => {
     api<{ products: Product[] }>("/api/products").then((res) => setProducts(res.products));
   }, []);
+  useEffect(() => {
+    if (!inviteOpen) return;
+    api<{ invite_code: string }>("/api/auth/invite-code")
+      .then((res) => setInviteCode(res.invite_code))
+      .catch((err) => setInviteError(err instanceof Error ? err.message : "A meghívókód betöltése sikertelen."));
+  }, [inviteOpen]);
+
+  async function saveInviteCode(event: React.FormEvent) {
+    event.preventDefault();
+    setInviteError("");
+    setInviteMessage("");
+    try {
+      const res = await api<{ invite_code: string }>("/api/auth/invite-code", {
+        method: "PUT",
+        body: JSON.stringify({ invite_code: inviteCode })
+      });
+      setInviteCode(res.invite_code);
+      setInviteMessage("Meghívókód mentve.");
+    } catch (err) {
+      setInviteError(err instanceof Error ? err.message : "A meghívókód mentése sikertelen.");
+    }
+  }
   const waitingForAi = products.filter((product) => product.status === "DRAFT" && product.images.some((image) => image.imageType === "ORIGINAL"));
   const aiGenerated = products.filter((product) => product.images.some((image) => image.imageType === "AI_GENERATED"));
   const current = products.filter((product) => product.status === "APPROVED");
@@ -703,6 +788,22 @@ function Dashboard({ onNew, onStorefront, onAi, onShare, onCurrent, onOrders }: 
           <strong>→</strong>
         </button>
       </section>
+      <section className="panel invite-panel">
+        <button className="secondary icon-text" onClick={() => setInviteOpen((value) => !value)}>
+          <KeyRound size={18} /> Meghívókód megadása
+        </button>
+        {inviteOpen && (
+          <form className="invite-form" onSubmit={saveInviteCode}>
+            <label>
+              Meghívókód
+              <input value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} type="text" />
+            </label>
+            {inviteError && <p className="error">{inviteError}</p>}
+            {inviteMessage && <p className="success">{inviteMessage}</p>}
+            <button className="primary" type="submit">Mentés</button>
+          </form>
+        )}
+      </section>
     </>
   );
 }
@@ -714,10 +815,10 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
   const [product, setProduct] = useState<Product | null>(null);
   const [form, setForm] = useState({
     product_id: "",
+    product_name: "",
     price: "",
     available_sizes: [] as string[],
-    color: "",
-    brand: "",
+    category: "",
     description: "",
     reservable_until: "",
     reservable_duration_hours: "24"
@@ -739,7 +840,9 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
         method: "POST",
         body: JSON.stringify({
           ...form,
+          product_name: form.product_name || null,
           price: Number(form.price),
+          category: form.category || null,
           reservable_until: form.reservable_until ? new Date(form.reservable_until).toISOString() : null,
           reservable_duration_hours: form.reservable_until ? null : Number(form.reservable_duration_hours)
         })
@@ -787,12 +890,12 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
         </div>
       )}
       {step === "data" && (
-        <div className="panel form-grid">
+        <div className="panel form-grid product-data-form">
           <Text label="Product ID" value={form.product_id} onChange={(product_id) => setForm({ ...form, product_id })} />
+          <Text label="Termék megnevezése" value={form.product_name} onChange={(product_name) => setForm({ ...form, product_name })} />
           <Text label="Ár (Ft)" type="number" value={form.price} onChange={(price) => setForm({ ...form, price })} />
           <SizePicker value={form.available_sizes} onChange={(available_sizes) => setForm({ ...form, available_sizes })} />
-          <Text label="Szín" value={form.color} onChange={(color) => setForm({ ...form, color })} />
-          <Text label="Márka" value={form.brand} onChange={(brand) => setForm({ ...form, brand })} />
+          <Text label="Kategória" value={form.category} onChange={(category) => setForm({ ...form, category })} />
           <ReservationDeadlinePicker
             durationHours={form.reservable_duration_hours}
             customDate={form.reservable_until}
@@ -816,6 +919,7 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
             <h2>Termék mentve</h2>
             <dl>
               <dt>Product ID</dt><dd>{product.productId}</dd>
+              <dt>Termék megnevezése</dt><dd>{product.productName || "-"}</dd>
               <dt>Publikus sorszám</dt><dd>Honlapra megosztáskor kapja meg.</dd>
               <dt>Ár</dt><dd>{formatHuf(product.price)}</dd>
               <dt>Méretek</dt><dd>{product.sizes.map((s) => s.size).join("; ")}</dd>
@@ -894,6 +998,8 @@ function SizePicker({ value, onChange }: { value: string[]; onChange: (value: st
 function AiGenerationQueue({ onShare }: { onShare: () => void }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   async function load() {
@@ -907,6 +1013,7 @@ function AiGenerationQueue({ onShare }: { onShare: () => void }) {
 
   async function generate(product: Product) {
     setBusyId(product.id);
+    setMessage("");
     setError("");
     try {
       await api<{ product: Product }>(`/api/products/${product.id}/generate`, { method: "POST" });
@@ -915,6 +1022,30 @@ function AiGenerationQueue({ onShare }: { onShare: () => void }) {
       setError(err instanceof Error ? err.message : "Generálási hiba");
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function generateAll() {
+    if (!products.length || bulkBusy) return;
+    const queue = [...products];
+    setBulkBusy(true);
+    setError("");
+    setMessage(`Generálás indul: 0/${queue.length}`);
+    try {
+      for (let index = 0; index < queue.length; index += 1) {
+        const product = queue[index];
+        setBusyId(product.id);
+        setMessage(`Generálás folyamatban: ${index + 1}/${queue.length} (#${product.displayNumber})`);
+        await api<{ product: Product }>(`/api/products/${product.id}/generate`, { method: "POST" });
+      }
+      setMessage(`Elkészült: ${queue.length}/${queue.length} AI-generálás.`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Generálási hiba");
+      await load();
+    } finally {
+      setBusyId(null);
+      setBulkBusy(false);
     }
   }
 
@@ -929,6 +1060,15 @@ function AiGenerationQueue({ onShare }: { onShare: () => void }) {
         <button className="secondary" onClick={onShare}>Megosztás</button>
       </header>
       {error && <p className="error">{error}</p>}
+      {message && <p className="success">{message}</p>}
+      {products.length > 0 && (
+        <section className="bulk-action-panel">
+          <button className="tdo-primary icon-text" disabled={bulkBusy || busyId !== null} onClick={generateAll}>
+            <Sparkles size={22} /> {bulkBusy ? "Generálás mind folyamatban..." : "Generálás mind"}
+          </button>
+          <span>{products.length} kép vár AI-generálásra</span>
+        </section>
+      )}
       <section className="cards">
         {products.map((product) => {
           const original = product.images.find((img) => img.imageType === "ORIGINAL");
@@ -940,10 +1080,10 @@ function AiGenerationQueue({ onShare }: { onShare: () => void }) {
                 <span>{product.productId}</span>
               </div>
               <p>{formatHuf(product.price)} · {product.sizes.map((s) => s.size).join("; ")}</p>
-              <button className="primary icon-text full-width" disabled={busyId === product.id} onClick={() => generate(product)}>
+              <button className="primary icon-text full-width" disabled={bulkBusy || busyId === product.id} onClick={() => generate(product)}>
                 <Sparkles size={18} /> {busyId === product.id ? "Generálás..." : "AI-generálás"}
               </button>
-              <button className="danger icon-text full-width" disabled={busyId === product.id} onClick={() => remove(product)}>
+              <button className="danger icon-text full-width" disabled={bulkBusy || busyId === product.id} onClick={() => remove(product)}>
                 <Trash2 size={18} /> Törlés
               </button>
             </article>
@@ -1002,7 +1142,7 @@ function ShareCenter() {
   }
 
   const originalOnly = products.filter((product) => productOriginalImage(product));
-  const generated = products.filter((product) => productGeneratedImage(product));
+  const generated = products.filter((product) => productOriginalImage(product) || productGeneratedImage(product));
 
   return (
     <>
@@ -1076,6 +1216,7 @@ function ShareSection({ title, hint, products, variant, busyId, onWebsite, onFac
 function ShareCard({ product, variant, busy, onWebsite, onFacebook, onBoth, onDeleted }: { product: Product; variant: ShareVariant; busy: boolean; onWebsite: () => void; onFacebook: () => void; onBoth: () => void; onDeleted: () => void }) {
   const image = variant === "raw" ? productOriginalImage(product) : productGeneratedImage(product);
   const url = imageUrl(image);
+  const waitingForAi = variant === "generated" && !image;
   const [editing, setEditing] = useState(false);
   async function remove() {
     if (await deleteProduct(product)) onDeleted();
@@ -1083,20 +1224,31 @@ function ShareCard({ product, variant, busy, onWebsite, onFacebook, onBoth, onDe
 
   return (
     <article className="share-card">
-      <img src={url} alt={`Megosztható termék ${product.displayNumber}`} />
+      <div className="share-image-slot">
+        {image ? (
+          <img src={url} alt={`Megosztható termék ${product.displayNumber}`} />
+        ) : (
+          <div className="share-ai-pending" aria-label="AI-generálásra vár">
+            <span className="pending-ban"><Ban size={32} /></span>
+            <strong>AI-generálásra vár</strong>
+            <small>Az eredeti kép megmaradt, az AI-verzió még nem készült el.</small>
+          </div>
+        )}
+      </div>
       <div className="publish-panel">
         <h2>#{product.displayNumber}</h2>
-        <span className="status-note">{variant === "raw" ? `Nyers kép: termek_${product.displayNumber}_nyers` : "AI-generált kép"}</span>
+        <span className="status-note">{variant === "raw" ? `Nyers kép: termek_${product.displayNumber}_nyers` : waitingForAi ? "AI-verzió még nincs kész" : "AI-generált kép"}</span>
         <dl>
           <dt>Product ID</dt><dd>{product.productId}</dd>
+          <dt>Megnevezés</dt><dd>{product.productName || "-"}</dd>
           <dt>Ár</dt><dd>{formatHuf(product.price)}</dd>
           <dt>Méretek</dt><dd>{product.sizes.map((s) => s.size).join("; ")}</dd>
           <dt>Állapot</dt><dd>{product.status === "APPROVED" ? "Honlapon" : "Nincs honlapon"}</dd>
         </dl>
         <div className="big-action-grid">
-          <button className="primary icon-text" disabled={busy} onClick={onWebsite}><FolderCheck size={20} /> Honlapra</button>
-          <button className="secondary icon-text" disabled={busy} onClick={onFacebook}><Share2 size={20} /> Facebookra</button>
-          <button className="tdo-primary icon-text" disabled={busy} onClick={onBoth}><Check size={20} /> Mindkettőre</button>
+          <button className="primary icon-text" disabled={busy || waitingForAi} onClick={onWebsite}><FolderCheck size={20} /> Honlapra</button>
+          <button className="secondary icon-text" disabled={busy || waitingForAi} onClick={onFacebook}><Share2 size={20} /> Facebookra</button>
+          <button className="tdo-primary icon-text" disabled={busy || waitingForAi} onClick={onBoth}><Check size={20} /> Mindkettőre</button>
           <button className="secondary icon-text" disabled={busy} onClick={() => setEditing((value) => !value)}><Eye size={20} /> Módosítás</button>
           <button className="danger icon-text" disabled={busy} onClick={remove}><Trash2 size={20} /> Törlés</button>
         </div>
@@ -1109,11 +1261,10 @@ function ShareCard({ product, variant, busy, onWebsite, onFacebook, onBoth, onDe
 function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () => void }) {
   const [form, setForm] = useState({
     product_id: product.productId,
+    product_name: product.productName ?? "",
     price: String(product.price),
     available_sizes: product.sizes.map((size) => size.size),
     category: product.category ?? "",
-    color: product.color ?? "",
-    brand: product.brand ?? "",
     description: product.description ?? "",
     reservable_until: toLocalDateTimeInput(product.reservableUntil)
   });
@@ -1129,11 +1280,10 @@ function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () =
         method: "PUT",
         body: JSON.stringify({
           product_id: form.product_id,
+          product_name: form.product_name || null,
           price: Number(form.price),
           available_sizes: form.available_sizes,
           category: form.category || null,
-          color: form.color || null,
-          brand: form.brand || null,
           description: form.description || null,
           reservable_until: form.reservable_until ? new Date(form.reservable_until).toISOString() : null
         })
@@ -1147,14 +1297,13 @@ function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () =
   }
 
   return (
-    <form className="edit-panel form-grid" onSubmit={save}>
+    <form className="edit-panel form-grid product-data-form" onSubmit={save}>
       {error && <p className="error wide">{error}</p>}
       <Text label="Product ID" value={form.product_id} onChange={(product_id) => setForm({ ...form, product_id })} />
+      <Text label="Termék megnevezése" value={form.product_name} onChange={(product_name) => setForm({ ...form, product_name })} />
       <Text label="Ár (Ft)" type="number" value={form.price} onChange={(price) => setForm({ ...form, price })} />
       <SizePicker value={form.available_sizes} onChange={(available_sizes) => setForm({ ...form, available_sizes })} />
       <Text label="Kategória" value={form.category} onChange={(category) => setForm({ ...form, category })} />
-      <Text label="Szín" value={form.color} onChange={(color) => setForm({ ...form, color })} />
-      <Text label="Márka" value={form.brand} onChange={(brand) => setForm({ ...form, brand })} />
       <Text label="Foglalható eddig" type="datetime-local" value={form.reservable_until} onChange={(reservable_until) => setForm({ ...form, reservable_until })} />
       <label className="wide">
         Leírás
@@ -1207,10 +1356,10 @@ function CurrentOfferings() {
               <tr>
                 <th>Kép</th>
                 <th>#</th>
+                <th>Megnevezés</th>
                 <th>Ár</th>
                 <th>Méretek</th>
                 <th>Kategória</th>
-                <th>Márka</th>
                 <th>Foglalható eddig</th>
                 <th>Művelet</th>
               </tr>
@@ -1223,10 +1372,10 @@ function CurrentOfferings() {
                     <tr>
                       <td><img className="table-thumb" src={imageUrl(image)} alt={`Termék ${product.displayNumber}`} /></td>
                       <td>#{product.displayNumber}</td>
+                      <td>{product.productName || "-"}</td>
                       <td>{formatHuf(product.price)}</td>
                       <td>{product.sizes.map((s) => s.size).join("; ")}</td>
                       <td>{product.category || "-"}</td>
-                      <td>{product.brand || "-"}</td>
                       <td>{formatDateTime(product.reservableUntil)}</td>
                       <td>
                         <div className="table-actions">
@@ -1294,10 +1443,10 @@ function DeletedProducts() {
                 <th>Kép</th>
                 <th>#</th>
                 <th>Product ID</th>
+                <th>Megnevezés</th>
                 <th>Ár</th>
                 <th>Méretek</th>
                 <th>Kategória</th>
-                <th>Márka</th>
                 <th>Művelet</th>
               </tr>
             </thead>
@@ -1309,10 +1458,10 @@ function DeletedProducts() {
                     <td>{image ? <img className="table-thumb" src={imageUrl(image)} alt={`Törölt termék ${product.displayNumber}`} /> : "-"}</td>
                     <td>#{product.displayNumber}</td>
                     <td>{product.productId}</td>
+                    <td>{product.productName || "-"}</td>
                     <td>{formatHuf(product.price)}</td>
                     <td>{product.sizes.map((s) => s.size).join("; ")}</td>
                     <td>{product.category || "-"}</td>
-                    <td>{product.brand || "-"}</td>
                     <td>
                       <button className="primary table-action-btn" disabled={busyId === product.id} onClick={() => restore(product)}>
                         Visszaállítás

@@ -37,6 +37,13 @@ async function main() {
     });
     console.log(`Seed user ready: ${user.username} (${user.role})`);
   }
+
+  await prisma.appSetting.upsert({
+    where: { key: "REGISTRATION_INVITE_CODE" },
+    update: {},
+    create: { key: "REGISTRATION_INVITE_CODE", value: "tunde2026" }
+  });
+  console.log("Registration invite code ready.");
 }
 
 main().finally(async () => {

@@ -17,6 +17,7 @@ export const allowedSizes = ["XS", "S", "M", "L", "XL", "XXL", "S-M", "M-L", "L-
 
 export const productPayloadSchema = z.object({
   product_id: z.string().trim().min(1).max(80),
+  product_name: z.string().trim().min(1).max(160).optional().nullable(),
   display_number: z.string().trim().min(1).max(20).regex(/^[\p{L}\p{N}-]+$/u).optional().nullable(),
   price: z.coerce.number().int().positive().max(10_000_000),
   available_sizes: z.array(z.enum(allowedSizes)).min(1).max(12),
@@ -51,9 +52,21 @@ export const loginSchema = z.object({
   password: z.string().min(6).max(200)
 });
 
+export const registerSchema = loginSchema.extend({
+  last_name: z.string().trim().min(1).max(80),
+  first_name: z.string().trim().min(1).max(80),
+  phone: z.string().trim().min(6).max(40).regex(/^[0-9+\-() /]+$/),
+  invite_code: z.string().trim().min(3).max(80)
+});
+
+export const inviteCodePayloadSchema = z.object({
+  invite_code: z.string().trim().min(3).max(80)
+});
+
 export type ProductPayload = z.infer<typeof productPayloadSchema>;
 export type PickupOptionPayload = z.infer<typeof pickupOptionPayloadSchema>;
 export type ReservationPayload = z.infer<typeof reservationPayloadSchema>;
+export type RegisterPayload = z.infer<typeof registerSchema>;
 export type ProductStatus = (typeof productStatuses)[number];
 export type GenerationStatus = (typeof generationStatuses)[number];
 export type ImageType = (typeof imageTypes)[number];

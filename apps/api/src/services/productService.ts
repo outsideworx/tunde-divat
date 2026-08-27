@@ -46,6 +46,7 @@ export class ProductService {
         const product = await tx.product.create({
           data: {
             productId: payload.product_id,
+            productName: payload.product_name,
             displayNumber: payload.display_number ?? "0",
             price: payload.price,
             category: payload.category ?? this.inferCategory(payload),
@@ -83,6 +84,7 @@ export class ProductService {
         where: { id },
         data: {
           productId: payload.product_id ?? existing.productId,
+          productName: payload.product_name === undefined ? existing.productName : payload.product_name,
           displayNumber: payload.display_number ?? existing.displayNumber,
           price: payload.price ?? existing.price,
           category: payload.category === undefined ? existing.category : payload.category ?? this.inferCategory({ ...existing, ...payload } as ProductPayload),
@@ -184,6 +186,7 @@ export class ProductService {
           reservableUntil,
           category: product.category ?? this.inferCategory({
             product_id: product.productId,
+            product_name: product.productName,
             brand: product.brand,
             description: product.description,
             color: product.color
@@ -268,9 +271,10 @@ export class ProductService {
     });
   }
 
-  private inferCategory(payload: Pick<ProductPayload, "product_id" | "description" | "brand" | "color">) {
+  private inferCategory(payload: Pick<ProductPayload, "product_id" | "product_name" | "description" | "brand" | "color">) {
     const text = [
       "product_id" in payload ? payload.product_id : "",
+      payload.product_name,
       payload.description,
       payload.brand,
       payload.color

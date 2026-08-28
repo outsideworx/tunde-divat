@@ -25,7 +25,7 @@ export function createApp() {
         const isLocalNetworkDevOrigin =
           env.NODE_ENV !== "production" &&
           !!origin &&
-          /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}):5173$/.test(origin);
+          /^http:\/\/(localhost|127\.0\.0\.1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}):5173$/.test(origin);
         callback(null, !origin || allowedOrigins.has(origin) || isLocalNetworkDevOrigin);
       },
       credentials: true

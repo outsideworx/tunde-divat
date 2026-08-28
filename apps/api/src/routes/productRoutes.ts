@@ -1,5 +1,6 @@
 import { Router } from "express";
 import multer from "multer";
+import { z } from "zod";
 import { productPayloadSchema } from "@fashion-mvp/shared";
 import { env } from "../config/env.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -15,6 +16,9 @@ const upload = multer({
 
 export const productRoutes = Router();
 const products = new ProductService();
+const generationPayloadSchema = z.object({
+  gender: z.enum(["female", "male"]).default("female")
+});
 
 productRoutes.use(requireAuth);
 
@@ -76,7 +80,8 @@ productRoutes.post(
   "/:id/generate",
   generationLimiter,
   asyncHandler(async (req, res) => {
-    res.json({ product: await products.generate(Number(req.params.id)) });
+    const payload = generationPayloadSchema.parse(req.body ?? {});
+    res.json({ product: await products.generate(Number(req.params.id), payload.gender) });
   })
 );
 
@@ -84,7 +89,8 @@ productRoutes.post(
   "/:id/regenerate",
   generationLimiter,
   asyncHandler(async (req, res) => {
-    res.json({ product: await products.generate(Number(req.params.id)) });
+    const payload = generationPayloadSchema.parse(req.body ?? {});
+    res.json({ product: await products.generate(Number(req.params.id), payload.gender) });
   })
 );
 

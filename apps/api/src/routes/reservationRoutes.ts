@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { reservationPayloadSchema } from "@fashion-mvp/shared";
+import { reservationPayloadSchema, reservationStatusPayloadSchema } from "@fashion-mvp/shared";
 import { requireAuth } from "../middleware/auth.js";
 import { asyncHandler, AppError } from "../utils/errors.js";
 import { ReservationService } from "../services/reservationService.js";
@@ -29,6 +29,15 @@ reservationRoutes.post(
   asyncHandler(async (req, res) => {
     const payload = reservationPayloadSchema.parse(req.body);
     res.status(201).json({ reservation: await reservations.reserve(payload, req.user!.id) });
+  })
+);
+
+reservationRoutes.patch(
+  "/:id/status",
+  asyncHandler(async (req, res) => {
+    if (req.user!.role !== "ADMIN") throw new AppError(403, "Admin jogosultság szükséges.");
+    const payload = reservationStatusPayloadSchema.parse(req.body);
+    res.json({ reservation: await reservations.updateStatus(Number(req.params.id), payload) });
   })
 );
 

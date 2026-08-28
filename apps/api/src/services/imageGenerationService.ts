@@ -9,12 +9,14 @@ export type ImageGenerationResult = {
   height: number;
 };
 
+export type ModelGender = "female" | "male";
+
 export class ImageGenerationService {
   constructor(private provider: "mock" | "openai" = "mock") {}
 
-  async generateMarketingBase(original: Buffer): Promise<ImageGenerationResult> {
+  async generateMarketingBase(original: Buffer, gender: ModelGender = "female"): Promise<ImageGenerationResult> {
     if (this.provider === "openai") {
-      return this.generateWithOpenAI(original);
+      return this.generateWithOpenAI(original, gender);
     }
     const composed = sharp(original).rotate().resize(1080, 1350, {
       fit: "contain",
@@ -31,7 +33,7 @@ export class ImageGenerationService {
     };
   }
 
-  private async generateWithOpenAI(original: Buffer): Promise<ImageGenerationResult> {
+  private async generateWithOpenAI(original: Buffer, gender: ModelGender): Promise<ImageGenerationResult> {
     if (!env.OPENAI_API_KEY) {
       throw new Error("OPENAI_API_KEY is required when AI_PROVIDER=openai.");
     }
@@ -48,11 +50,14 @@ export class ImageGenerationService {
     form.append("image[]", new Blob([source], { type: "image/png" }), "product-reference.png");
     form.append("size", "1024x1536");
     form.append("quality", "medium");
+    const modelDescription = gender === "male"
+      ? "Show the same garment on a natural-looking adult male model in a simple standing pose, with a friendly natural smile."
+      : "Show the same garment on a natural-looking adult female model in a simple standing pose, with a friendly natural smile.";
     form.append("prompt", [
       "Create a professional vertical ecommerce fashion photo from the uploaded clothing product reference.",
-      "Show the same garment on a natural-looking adult female model in a simple standing pose.",
+      modelDescription,
       "Preserve the garment's color, cut, material feel, pattern, proportions, and visible details as faithfully as possible.",
-      "Use a clean bright studio or boutique background suitable for an online fashion store.",
+      "Place the model in a clean, bright, neutral boutique store environment or modern fashion shop background, with soft natural lighting, subtle clothing racks or fitting-room details in the background, and no distracting objects.",
       "Do not add text, logos, watermarks, numbers, prices, size labels, badges, or decorative typography.",
       "The output should be realistic, tasteful, and ready for review before publishing."
     ].join(" "));

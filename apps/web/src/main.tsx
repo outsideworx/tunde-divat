@@ -1,7 +1,7 @@
 import { Fragment, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowLeft, Ban, Camera, Check, Download, Eye, FolderCheck, Heart, KeyRound, LogOut, Plus, RefreshCcw, Search, Share2, ShoppingBag, Sparkles, Trash2, Upload } from "lucide-react";
-import { allowedSizes, formatHuf } from "@fashion-mvp/shared";
+import { ArrowLeft, Ban, Camera, Check, Download, Eye, FolderCheck, Heart, KeyRound, LogOut, Menu, PanelLeftClose, Plus, RefreshCcw, Search, Share2, ShoppingBag, Sparkles, Trash2, Upload, Users } from "lucide-react";
+import { allowedSizes, formatHuf, reservationStatuses, type ReservationStatus } from "@fashion-mvp/shared";
 import "./styles.css";
 import { useEffect, useMemo, useState } from "react";
 
@@ -35,6 +35,7 @@ type Reservation = {
   pickupFk: number;
   size: string;
   quantity: number;
+  status: ReservationStatus;
   canCancel: boolean;
   reservedAt: string;
   cancelledAt?: string | null;
@@ -44,11 +45,25 @@ type Reservation = {
 };
 
 type User = { id: number; username: string; email?: string | null; role: string };
+type RegisteredUser = User & { lastName?: string | null; firstName?: string | null; phone?: string | null; createdAt: string };
 type Step = "photo" | "data" | "saved";
-type View = "dashboard" | "storefront" | "new" | "ai" | "share" | "current" | "orders" | "deleted";
+type View = "dashboard" | "storefront" | "new" | "ai" | "share" | "current" | "orders" | "pickup" | "deleted";
+type AdminView = View | "users";
 type AuthMode = "login" | "register";
 type StoreView = "catalog" | "reservations" | "favorites";
 type ShareVariant = "raw" | "generated";
+type ModelGender = "female" | "male";
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
+
+const reservationStatusLabels: Record<ReservationStatus, string> = {
+  PROCUREMENT_PENDING: "Beszerzésre vár",
+  ACQUIRED: "Beszerezve",
+  IN_STOCK_WAITING_PICKUP: "Raktárkészleten, átvételre vár",
+  PICKED_UP_PAID: "Átvéve, kifizetve"
+};
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API}${path}`, {
@@ -173,6 +188,12 @@ function formatRemaining(value?: string | null) {
   return `${hours} óra ${String(minutes).padStart(2, "0")} perc`;
 }
 
+function isDeadlineUrgent(value?: string | null) {
+  if (!value) return false;
+  const diff = new Date(value).getTime() - Date.now();
+  return diff > 0 && diff <= 4 * 60 * 60 * 1000;
+}
+
 function toLocalDateTimeInput(value?: string | null) {
   if (!value) return "";
   const date = new Date(value);
@@ -190,6 +211,12 @@ async function deleteProduct(product: Product) {
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js").catch(() => undefined);
+    }
+  }, []);
 
   useEffect(() => {
     api<{ user: User }>("/api/auth/me")
@@ -297,6 +324,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
   const [category, setCategory] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [tick, setTick] = useState(0);
 
   async function loadStoreData() {
     const [productRes, pickupRes, reservationRes] = await Promise.all([
@@ -317,6 +345,11 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
     const raw = window.localStorage.getItem(`tdo:favorites:${user.id}`);
     setFavoriteIds(raw ? JSON.parse(raw) as number[] : []);
   }, [user.id]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setTick((value) => value + 1), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const onPopState = () => setDetailProductId(productIdFromPath());
@@ -446,6 +479,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
               favoriteIds={favoriteIds}
               onToggleFavorite={toggleFavorite}
               onOpenDetail={openProductDetail}
+              tick={tick}
             />
             {!favoriteProducts.length && <div className="panel empty-state">Még nincs kedvenc terméked.</div>}
           </>
@@ -479,20 +513,40 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
               favoriteIds={favoriteIds}
               onToggleFavorite={toggleFavorite}
               onOpenDetail={openProductDetail}
+              tick={tick}
             />
             {!visible.length && <div className="panel empty-state">Még nincs termék feltöltve. Hamarosan új árukészlettel jelentkezünk!</div>}
           </>
         )}
       </main>
+      <nav className="mobile-store-nav" aria-label="Vásárlói gyorsnavigáció">
+        <button className={storeView === "catalog" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("catalog")}>
+          <ShoppingBag size={20} />
+          <span>Kínálat</span>
+        </button>
+        <button className={storeView === "favorites" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("favorites")}>
+          <Heart size={20} fill={storeView === "favorites" && !detailProductId ? "currentColor" : "none"} />
+          <span>Kedvencek</span>
+        </button>
+        <button className={storeView === "reservations" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("reservations")}>
+          <FolderCheck size={20} />
+          <span>Foglalásaim</span>
+        </button>
+        <button onClick={logout}>
+          <LogOut size={20} />
+          <span>Kilépés</span>
+        </button>
+      </nav>
     </div>
   );
 }
 
-function ProductGrid({ products, favoriteIds, onToggleFavorite, onOpenDetail }: {
+function ProductGrid({ products, favoriteIds, onToggleFavorite, onOpenDetail, tick }: {
   products: Product[];
   favoriteIds: number[];
   onToggleFavorite: (product: Product) => void;
   onOpenDetail: (product: Product) => void;
+  tick: number;
 }) {
   return (
     <section className="store-grid">
@@ -502,6 +556,7 @@ function ProductGrid({ products, favoriteIds, onToggleFavorite, onOpenDetail }: 
           isFavorite={favoriteIds.includes(product.id)}
           onToggleFavorite={() => onToggleFavorite(product)}
           onOpenDetail={() => onOpenDetail(product)}
+          tick={tick}
           key={product.id}
         />
       ))}
@@ -570,7 +625,7 @@ function ReservationsPage({ reservations, onBackToCatalog, onCancel }: { reserva
   );
 }
 
-function StoreProductCard({ product, isFavorite, onToggleFavorite, onOpenDetail }: { product: Product; isFavorite: boolean; onToggleFavorite: () => void; onOpenDetail: () => void }) {
+function StoreProductCard({ product, isFavorite, onToggleFavorite, onOpenDetail, tick }: { product: Product; isFavorite: boolean; onToggleFavorite: () => void; onOpenDetail: () => void; tick: number }) {
   const displayImage = productDisplayImage(product);
   return (
     <article className="store-card">
@@ -585,6 +640,9 @@ function StoreProductCard({ product, isFavorite, onToggleFavorite, onOpenDetail 
       <button className="store-card-summary" onClick={onOpenDetail}>
         <span>{productTitle(product)}</span>
         <strong>{formatHuf(product.price)}</strong>
+        <small className="deadline-countdown">
+          Foglalható eddig: <b className={isDeadlineUrgent(product.reservableUntil) ? "urgent" : ""}>{tick >= 0 ? formatRemaining(product.reservableUntil) : ""}</b>
+        </small>
       </button>
     </article>
   );
@@ -687,7 +745,8 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
 }
 
 function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
-  const [view, setView] = useState<View>("dashboard");
+  const [view, setView] = useState<AdminView>("dashboard");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   async function logout() {
     await api("/api/auth/logout", { method: "POST" });
     onLogout();
@@ -696,11 +755,16 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
     return <CustomerStorefront user={user} onLogout={onLogout} onBackToAdmin={() => setView("dashboard")} />;
   }
   return (
-    <div className="app">
+    <div className={`app ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <aside className="sidebar">
-        <div>
-          <strong>Tünde Divat Online</strong>
-          <span>{user.username}</span>
+        <div className="sidebar-head">
+          <div>
+            <strong>Tünde Divat Online</strong>
+            <span>{user.username}</span>
+          </div>
+          <button className="sidebar-toggle" onClick={() => setSidebarCollapsed((value) => !value)} aria-label={sidebarCollapsed ? "Menü megnyitása" : "Menü becsukása"}>
+            {sidebarCollapsed ? <Menu size={20} /> : <PanelLeftClose size={20} />}
+          </button>
         </div>
         <nav>
           <button onClick={() => setView("dashboard")} className={view === "dashboard" ? "active" : ""}>Dashboard</button>
@@ -708,26 +772,90 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
           <button onClick={() => setView("ai")} className={view === "ai" ? "active" : ""}>2. AI-generálás</button>
           <button onClick={() => setView("share")} className={view === "share" ? "active" : ""}>3. Megosztás</button>
           <button onClick={() => setView("current")} className={view === "current" ? "active" : ""}>4. Jelenlegi kínálat</button>
-          <button onClick={() => setView("orders")} className={view === "orders" ? "active" : ""}>5. Rendelések</button>
+          <button onClick={() => setView("orders")} className={view === "orders" ? "active" : ""}>5. Rendelők és rendelések</button>
+          <button onClick={() => setView("pickup")} className={view === "pickup" ? "active" : ""}>6. Személyes átvétel megadása</button>
           <button onClick={() => setView("storefront")}>Felhasználói nézet</button>
           <button onClick={() => setView("deleted")} className={view === "deleted" ? "active" : ""}>Törölt tételek</button>
+          <button onClick={() => setView("users")} className={view === "users" ? "active" : ""}>Regisztrált felhasználók</button>
         </nav>
         <button className="ghost icon-text" onClick={logout}><LogOut size={18} /> Kilépés</button>
       </aside>
       <main className="content">
-        {view === "dashboard" && <Dashboard onNew={() => setView("new")} onStorefront={() => setView("storefront")} onAi={() => setView("ai")} onShare={() => setView("share")} onCurrent={() => setView("current")} onOrders={() => setView("orders")} />}
+        {view !== "dashboard" && (
+          <button className="secondary icon-text admin-back-button" onClick={() => setView("dashboard")}>
+            <ArrowLeft size={18} /> Vissza a főmenübe
+          </button>
+        )}
+        {view === "dashboard" && <Dashboard onNew={() => setView("new")} onStorefront={() => setView("storefront")} onAi={() => setView("ai")} onShare={() => setView("share")} onCurrent={() => setView("current")} onOrders={() => setView("orders")} onPickup={() => setView("pickup")} />}
         {view === "new" && <ProductWizard onDone={() => setView("ai")} />}
         {view === "ai" && <AiGenerationQueue onShare={() => setView("share")} />}
         {view === "share" && <ShareCenter />}
         {view === "current" && <CurrentOfferings />}
         {view === "orders" && <Orders />}
+        {view === "pickup" && <PickupSettings />}
         {view === "deleted" && <DeletedProducts />}
+        {view === "users" && <RegisteredUsers />}
       </main>
     </div>
   );
 }
 
-function Dashboard({ onNew, onStorefront, onAi, onShare, onCurrent, onOrders }: { onNew: () => void; onStorefront: () => void; onAi: () => void; onShare: () => void; onCurrent: () => void; onOrders: () => void }) {
+function PwaInstallPanel() {
+  const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
+  const [installed, setInstalled] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    const standalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
+    setInstalled(standalone);
+    const onBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallEvent(event as BeforeInstallPromptEvent);
+      setMessage("");
+    };
+    const onInstalled = () => {
+      setInstalled(true);
+      setInstallEvent(null);
+      setMessage("Az app telepítve van ezen az eszközön.");
+    };
+    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, []);
+
+  async function install() {
+    if (installed) {
+      setMessage("Az app már telepített nézetben fut.");
+      return;
+    }
+    if (installEvent) {
+      await installEvent.prompt();
+      const choice = await installEvent.userChoice;
+      setInstallEvent(null);
+      setMessage(choice.outcome === "accepted" ? "Telepítés elindítva." : "A telepítést most kihagytad.");
+      return;
+    }
+    setMessage("iPhone-on: Safari megosztás ikon, majd Hozzáadás a Főképernyőhöz. Androidon: Chrome menü, majd Alkalmazás telepítése.");
+  }
+
+  return (
+    <section className="panel pwa-install-panel">
+      <div>
+        <span>Telefonos admin app</span>
+        <strong>{installed ? "Telepített nézet aktív" : "App telepítése telefonra"}</strong>
+      </div>
+      <button className="tdo-primary icon-text" onClick={install}>
+        <Download size={22} /> {installed ? "Megnyitva appként" : "App telepítése telefonra"}
+      </button>
+      {message && <p className="status-note">{message}</p>}
+    </section>
+  );
+}
+
+function Dashboard({ onNew, onStorefront, onAi, onShare, onCurrent, onOrders, onPickup }: { onNew: () => void; onStorefront: () => void; onAi: () => void; onShare: () => void; onCurrent: () => void; onOrders: () => void; onPickup: () => void }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
@@ -770,6 +898,7 @@ function Dashboard({ onNew, onStorefront, onAi, onShare, onCurrent, onOrders }: 
         <button className="new-product-cta primary icon-text" onClick={onNew}><Plus size={30} /> 1. Új termék</button>
         <button className="storefront-cta secondary icon-text" onClick={onStorefront}><Eye size={26} /> Felhasználói nézet</button>
       </div>
+      <PwaInstallPanel />
       <section className="dashboard-list">
         <button className="dashboard-row" onClick={onAi}>
           <span>2. AI-generálásra vár</span>
@@ -784,7 +913,11 @@ function Dashboard({ onNew, onStorefront, onAi, onShare, onCurrent, onOrders }: 
           <strong>{current.length}</strong>
         </button>
         <button className="dashboard-row" onClick={onOrders}>
-          <span>5. Rendelések</span>
+          <span>5. Rendelők és rendelések</span>
+          <strong>→</strong>
+        </button>
+        <button className="dashboard-row" onClick={onPickup}>
+          <span>6. Személyes átvétel megadása</span>
           <strong>→</strong>
         </button>
       </section>
@@ -1011,12 +1144,15 @@ function AiGenerationQueue({ onShare }: { onShare: () => void }) {
     void load();
   }, []);
 
-  async function generate(product: Product) {
+  async function generate(product: Product, gender: ModelGender) {
     setBusyId(product.id);
     setMessage("");
     setError("");
     try {
-      await api<{ product: Product }>(`/api/products/${product.id}/generate`, { method: "POST" });
+      await api<{ product: Product }>(`/api/products/${product.id}/generate`, {
+        method: "POST",
+        body: JSON.stringify({ gender })
+      });
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Generálási hiba");
@@ -1025,20 +1161,24 @@ function AiGenerationQueue({ onShare }: { onShare: () => void }) {
     }
   }
 
-  async function generateAll() {
+  async function generateAll(gender: ModelGender) {
     if (!products.length || bulkBusy) return;
     const queue = [...products];
+    const label = gender === "female" ? "Nő" : "Férfi";
     setBulkBusy(true);
     setError("");
-    setMessage(`Generálás indul: 0/${queue.length}`);
+    setMessage(`Generálás indul (${label}): 0/${queue.length}`);
     try {
       for (let index = 0; index < queue.length; index += 1) {
         const product = queue[index];
         setBusyId(product.id);
-        setMessage(`Generálás folyamatban: ${index + 1}/${queue.length} (#${product.displayNumber})`);
-        await api<{ product: Product }>(`/api/products/${product.id}/generate`, { method: "POST" });
+        setMessage(`Generálás folyamatban (${label}): ${index + 1}/${queue.length} (#${product.displayNumber})`);
+        await api<{ product: Product }>(`/api/products/${product.id}/generate`, {
+          method: "POST",
+          body: JSON.stringify({ gender })
+        });
       }
-      setMessage(`Elkészült: ${queue.length}/${queue.length} AI-generálás.`);
+      setMessage(`Elkészült (${label}): ${queue.length}/${queue.length} AI-generálás.`);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Generálási hiba");
@@ -1063,8 +1203,11 @@ function AiGenerationQueue({ onShare }: { onShare: () => void }) {
       {message && <p className="success">{message}</p>}
       {products.length > 0 && (
         <section className="bulk-action-panel">
-          <button className="tdo-primary icon-text" disabled={bulkBusy || busyId !== null} onClick={generateAll}>
-            <Sparkles size={22} /> {bulkBusy ? "Generálás mind folyamatban..." : "Generálás mind"}
+          <button className="tdo-primary icon-text" disabled={bulkBusy || busyId !== null} onClick={() => generateAll("female")}>
+            <Sparkles size={22} /> {bulkBusy ? "Generálás folyamatban..." : "Generálás mind (Nő)"}
+          </button>
+          <button className="secondary icon-text" disabled={bulkBusy || busyId !== null} onClick={() => generateAll("male")}>
+            <Sparkles size={22} /> Generálás mind (Férfi)
           </button>
           <span>{products.length} kép vár AI-generálásra</span>
         </section>
@@ -1080,8 +1223,11 @@ function AiGenerationQueue({ onShare }: { onShare: () => void }) {
                 <span>{product.productId}</span>
               </div>
               <p>{formatHuf(product.price)} · {product.sizes.map((s) => s.size).join("; ")}</p>
-              <button className="primary icon-text full-width" disabled={bulkBusy || busyId === product.id} onClick={() => generate(product)}>
-                <Sparkles size={18} /> {busyId === product.id ? "Generálás..." : "AI-generálás"}
+              <button className="primary icon-text full-width" disabled={bulkBusy || busyId === product.id} onClick={() => generate(product, "female")}>
+                <Sparkles size={18} /> {busyId === product.id ? "Generálás..." : "AI-generálás (Nő)"}
+              </button>
+              <button className="secondary icon-text full-width" disabled={bulkBusy || busyId === product.id} onClick={() => generate(product, "male")}>
+                <Sparkles size={18} /> AI-generálás (Férfi)
               </button>
               <button className="danger icon-text full-width" disabled={bulkBusy || busyId === product.id} onClick={() => remove(product)}>
                 <Trash2 size={18} /> Törlés
@@ -1185,6 +1331,14 @@ function ShareSection({ title, hint, products, variant, busyId, onWebsite, onFac
   onBoth: (product: Product, variant: ShareVariant) => Promise<void>;
   onDeleted: () => void;
 }) {
+  const [visibleCount, setVisibleCount] = useState(25);
+  const visibleProducts = products.slice(0, visibleCount);
+  const remaining = Math.max(0, products.length - visibleCount);
+
+  useEffect(() => {
+    setVisibleCount(25);
+  }, [products.length, variant]);
+
   return (
     <section className="share-section">
       <div className="section-heading">
@@ -1195,7 +1349,7 @@ function ShareSection({ title, hint, products, variant, busyId, onWebsite, onFac
         <strong>{products.length} tétel</strong>
       </div>
       <div className="share-grid">
-        {products.map((product) => (
+        {visibleProducts.map((product) => (
           <ShareCard
             product={product}
             variant={variant}
@@ -1208,6 +1362,11 @@ function ShareSection({ title, hint, products, variant, busyId, onWebsite, onFac
           />
         ))}
       </div>
+      {remaining > 0 && (
+        <button className="secondary load-more-button" onClick={() => setVisibleCount((count) => count + 25)}>
+          További {Math.min(25, remaining)} megnyitása
+        </button>
+      )}
       {products.length === 0 && <EmptyState title="Ebben a csoportban most nincs megosztható kép" />}
     </section>
   );
@@ -1338,14 +1497,22 @@ function ApprovedProducts() {
 
 function CurrentOfferings() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [reservations, setReservations] = useState<Reservation[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
   async function load() {
-    const res = await api<{ products: Product[] }>("/api/products?status=APPROVED");
-    setProducts(res.products.filter((product) => productDisplayImage(product)));
+    const [productRes, reservationRes] = await Promise.all([
+      api<{ products: Product[] }>("/api/products?status=APPROVED"),
+      api<{ reservations: Reservation[] }>("/api/reservations")
+    ]);
+    setProducts(productRes.products.filter((product) => productDisplayImage(product)));
+    setReservations(reservationRes.reservations);
   }
   useEffect(() => {
     void load();
   }, []);
+  function reservationsForProduct(productId: number) {
+    return reservations.filter((reservation) => reservation.productFk === productId);
+  }
   return (
     <>
       <header className="topbar"><h1>Jelenlegi kínálat</h1></header>
@@ -1361,12 +1528,16 @@ function CurrentOfferings() {
                 <th>Méretek</th>
                 <th>Kategória</th>
                 <th>Foglalható eddig</th>
+                <th>Rendelt darab</th>
+                <th>Rendelők</th>
                 <th>Művelet</th>
               </tr>
             </thead>
             <tbody>
               {products.length ? products.map((product) => {
                 const image = productDisplayImage(product);
+                const productReservations = reservationsForProduct(product.id);
+                const reservedCount = productReservations.reduce((sum, reservation) => sum + reservation.quantity, 0);
                 return (
                   <Fragment key={product.id}>
                     <tr>
@@ -1377,6 +1548,16 @@ function CurrentOfferings() {
                       <td>{product.sizes.map((s) => s.size).join("; ")}</td>
                       <td>{product.category || "-"}</td>
                       <td>{formatDateTime(product.reservableUntil)}</td>
+                      <td>{reservedCount} db</td>
+                      <td>
+                        {productReservations.length ? (
+                          <div className="reservation-mini-list">
+                            {productReservations.map((reservation) => (
+                              <span key={reservation.id}>{reservation.user?.username ?? "-"}: {reservation.quantity} db ({reservation.size})</span>
+                            ))}
+                          </div>
+                        ) : "-"}
+                      </td>
                       <td>
                         <div className="table-actions">
                           <button className="secondary table-action-btn" onClick={() => setEditingId(editingId === product.id ? null : product.id)}>Módosítás</button>
@@ -1386,7 +1567,7 @@ function CurrentOfferings() {
                     </tr>
                     {editingId === product.id && (
                       <tr>
-                        <td colSpan={8}>
+                        <td colSpan={10}>
                           <ProductEditForm product={product} onSaved={async () => { setEditingId(null); await load(); }} />
                         </td>
                       </tr>
@@ -1394,7 +1575,7 @@ function CurrentOfferings() {
                   </Fragment>
                 );
               }) : (
-                <tr><td colSpan={8} className="empty-table-cell">Még nincs honlapon megjelenő tétel.</td></tr>
+                <tr><td colSpan={10} className="empty-table-cell">Még nincs honlapon megjelenő tétel.</td></tr>
               )}
             </tbody>
           </table>
@@ -1480,8 +1661,210 @@ function DeletedProducts() {
   );
 }
 
+function RegisteredUsers() {
+  const [users, setUsers] = useState<RegisteredUser[]>([]);
+  const [error, setError] = useState("");
+
+  async function load() {
+    const res = await api<{ users: RegisteredUser[] }>("/api/auth/users");
+    setUsers(res.users);
+  }
+
+  useEffect(() => {
+    load().catch((err) => setError(err instanceof Error ? err.message : "A felhasználók betöltése sikertelen."));
+  }, []);
+
+  return (
+    <>
+      <header className="topbar">
+        <h1>Regisztrált felhasználók</h1>
+      </header>
+      {error && <p className="error">{error}</p>}
+      <section className="panel">
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Felhasználónév</th>
+                <th>Vezetéknév</th>
+                <th>Keresztnév</th>
+                <th>Telefonszám</th>
+                <th>E-mail</th>
+                <th>Jogosultság</th>
+                <th>Regisztráció</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.length ? users.map((registeredUser) => (
+                <tr key={registeredUser.id}>
+                  <td>{registeredUser.username}</td>
+                  <td>{registeredUser.lastName || "-"}</td>
+                  <td>{registeredUser.firstName || "-"}</td>
+                  <td>{registeredUser.phone || "-"}</td>
+                  <td>{registeredUser.email || "-"}</td>
+                  <td>{registeredUser.role === "ADMIN" ? "Admin" : "Felhasználó"}</td>
+                  <td>{formatDateTime(registeredUser.createdAt)}</td>
+                </tr>
+              )) : (
+                <tr><td colSpan={7} className="empty-table-cell">Még nincs regisztrált felhasználó.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </>
+  );
+}
+
 function Orders() {
-  return <PickupSettings />;
+  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function load() {
+    const res = await api<{ reservations: Reservation[] }>("/api/reservations");
+    setReservations(res.reservations);
+  }
+
+  useEffect(() => {
+    load().catch((err) => setError(err instanceof Error ? err.message : "A rendelések betöltése sikertelen."));
+  }, []);
+
+  async function updateReservationStatus(reservation: Reservation, status: ReservationStatus) {
+    setBusyId(reservation.id);
+    setError("");
+    setMessage("");
+    try {
+      await api(`/api/reservations/${reservation.id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status })
+      });
+      setMessage("Rendelési státusz frissítve.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "A státusz módosítása sikertelen.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function exportOrdersXls() {
+    const rows = reservations.map((reservation) => `
+      <tr>
+        <td>#${reservation.product.displayNumber}</td>
+        <td>${reservation.product.productName ?? ""}</td>
+        <td>${reservation.user?.username ?? "-"}</td>
+        <td>${reservation.size}</td>
+        <td>${reservation.quantity}</td>
+        <td>${reservation.product.price}</td>
+        <td>${reservationStatusLabels[reservation.status]}</td>
+        <td>${reservation.pickup.address}</td>
+        <td>${formatPickupRange(reservation.pickup)}</td>
+        <td>${formatDateTime(reservation.reservedAt)}</td>
+      </tr>
+    `).join("");
+    const html = `
+      <html>
+        <head><meta charset="UTF-8" /></head>
+        <body>
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Termék</th>
+                <th>Felhasználó</th>
+                <th>Méret</th>
+                <th>Darab</th>
+                <th>Ár Ft</th>
+                <th>Státusz</th>
+                <th>Átvétel helye</th>
+                <th>Átvétel ideje</th>
+                <th>Foglalás ideje</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </body>
+      </html>
+    `;
+    downloadFile(`tunde-divat-rendelok-rendelesek-${new Date().toISOString().slice(0, 10)}.xls`, html, "application/vnd.ms-excel;charset=utf-8");
+  }
+
+  const grouped = reservations.reduce((groups, reservation) => {
+    const key = reservation.productFk;
+    const current = groups.get(key) ?? [];
+    current.push(reservation);
+    groups.set(key, current);
+    return groups;
+  }, new Map<number, Reservation[]>());
+  const productGroups = Array.from(grouped.values()).sort((a, b) => Number(a[0].product.displayNumber) - Number(b[0].product.displayNumber));
+
+  return (
+    <>
+      <header className="topbar">
+        <h1>Rendelők és rendelések</h1>
+        <button className="secondary icon-text" onClick={exportOrdersXls}><Download size={18} /> XLS mentés</button>
+      </header>
+      {error && <p className="error">{error}</p>}
+      {message && <p className="success">{message}</p>}
+      <section className="orders-by-product">
+        {productGroups.map((group) => {
+          const product = group[0].product;
+          const total = group.reduce((sum, reservation) => sum + reservation.quantity, 0);
+          return (
+            <section className="panel order-product-panel" key={product.id}>
+              <div className="section-heading">
+                <div>
+                  <h2>{productTitle(product)}</h2>
+                  <p>{formatHuf(product.price)} | {total} db foglalva</p>
+                </div>
+                <strong>{group.length} rendelő</strong>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Felhasználó</th>
+                      <th>Méret</th>
+                      <th>Darab</th>
+                      <th>Átvétel</th>
+                      <th>Foglalás ideje</th>
+                      <th>Státusz</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {group.map((reservation) => (
+                      <tr key={reservation.id}>
+                        <td>{reservation.user?.username ?? "-"}</td>
+                        <td>{reservation.size}</td>
+                        <td>{reservation.quantity} db</td>
+                        <td>{reservation.pickup.address}, {formatPickupRange(reservation.pickup)}</td>
+                        <td>{formatDateTime(reservation.reservedAt)}</td>
+                        <td>
+                          <select
+                            className="status-select"
+                            value={reservation.status}
+                            disabled={busyId === reservation.id}
+                            onChange={(event) => updateReservationStatus(reservation, event.target.value as ReservationStatus)}
+                          >
+                            {reservationStatuses.map((status) => (
+                              <option value={status} key={status}>{reservationStatusLabels[status]}</option>
+                            ))}
+                          </select>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          );
+        })}
+        {!productGroups.length && <div className="panel empty-state">Még nincs aktív rendelés.</div>}
+      </section>
+    </>
+  );
 }
 
 function PickupSettings() {
@@ -1573,7 +1956,7 @@ function PickupSettings() {
 
   return (
     <>
-      <header className="topbar"><h1>Személyes átvétel megadása</h1></header>
+      <header className="topbar"><h1>6. Személyes átvétel megadása</h1></header>
       {error && <p className="error">{error}</p>}
       {message && <p className="success">{message}</p>}
       <section className="panel form-grid">

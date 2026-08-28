@@ -1,4 +1,4 @@
-import type { ReservationPayload } from "@fashion-mvp/shared";
+import type { ReservationPayload, ReservationStatusPayload } from "@fashion-mvp/shared";
 import { prisma } from "../db/prisma.js";
 import { AppError } from "../utils/errors.js";
 
@@ -69,6 +69,14 @@ export class ReservationService {
     return prisma.reservation.update({
       where: { id },
       data: { cancelledAt: new Date() },
+      include: includeReservation
+    });
+  }
+
+  async updateStatus(id: number, payload: ReservationStatusPayload) {
+    return prisma.reservation.update({
+      where: { id },
+      data: { status: payload.status },
       include: includeReservation
     });
   }

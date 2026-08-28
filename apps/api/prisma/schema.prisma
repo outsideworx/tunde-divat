@@ -34,6 +34,13 @@ enum GenerationStatus {
   FAILED
 }
 
+enum ReservationStatus {
+  PROCUREMENT_PENDING
+  ACQUIRED
+  IN_STOCK_WAITING_PICKUP
+  PICKED_UP_PAID
+}
+
 model User {
   id            Int       @id @default(autoincrement())
   username      String    @unique @db.VarChar(40)
@@ -124,6 +131,7 @@ model Reservation {
   pickup      PickupOption @relation(fields: [pickupFk], references: [id], onDelete: Restrict)
   size        String       @db.VarChar(20)
   quantity    Int          @default(1)
+  status      ReservationStatus @default(PROCUREMENT_PENDING)
   canCancel   Boolean      @default(true) @map("can_cancel")
   reservedAt  DateTime     @default(now()) @map("reserved_at")
   cancelledAt DateTime?    @map("cancelled_at")

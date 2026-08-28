@@ -6,6 +6,7 @@ import { StorageService } from "./storageService.js";
 import { ImageGenerationService } from "./imageGenerationService.js";
 import { ImageOverlayService } from "./imageOverlayService.js";
 import { env } from "../config/env.js";
+import type { ModelGender } from "./imageGenerationService.js";
 
 const includeProduct = {
   sizes: true,
@@ -123,7 +124,7 @@ export class ProductService {
     return this.get(id);
   }
 
-  async generate(id: number) {
+  async generate(id: number, gender: ModelGender = "female") {
     const product = await this.ensurePublicDisplayNumber(id);
     const original = product.images.find((image) => image.imageType === "ORIGINAL");
     if (!original) throw new AppError(400, "Original image is required before generation");
@@ -133,7 +134,7 @@ export class ProductService {
     await prisma.product.update({ where: { id }, data: { status: "PROCESSING" } });
     try {
       const originalBuffer = await this.storage.read(original.storagePath);
-      const generated = await this.ai.generateMarketingBase(originalBuffer);
+      const generated = await this.ai.generateMarketingBase(originalBuffer, gender);
       const aiStored = await this.storage.save(generated.buffer, "webp");
       await prisma.productImage.create({
         data: {

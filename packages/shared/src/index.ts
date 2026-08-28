@@ -12,6 +12,12 @@ export const productStatuses = [
 export const generationStatuses = ["PENDING", "PROCESSING", "COMPLETED", "FAILED"] as const;
 export const imageTypes = ["ORIGINAL", "AI_GENERATED", "FINAL"] as const;
 export const userRoles = ["ADMIN", "STAFF"] as const;
+export const reservationStatuses = [
+  "PROCUREMENT_PENDING",
+  "ACQUIRED",
+  "IN_STOCK_WAITING_PICKUP",
+  "PICKED_UP_PAID"
+] as const;
 
 export const allowedSizes = ["XS", "S", "M", "L", "XL", "XXL", "S-M", "M-L", "L-XL"] as const;
 
@@ -47,6 +53,10 @@ export const reservationPayloadSchema = z.object({
   quantity: z.coerce.number().int().positive().max(20).optional()
 });
 
+export const reservationStatusPayloadSchema = z.object({
+  status: z.enum(reservationStatuses)
+});
+
 export const loginSchema = z.object({
   username: z.string().trim().min(3).max(40).regex(/^[a-zA-Z0-9._-]+$/),
   password: z.string().min(6).max(200)
@@ -66,11 +76,13 @@ export const inviteCodePayloadSchema = z.object({
 export type ProductPayload = z.infer<typeof productPayloadSchema>;
 export type PickupOptionPayload = z.infer<typeof pickupOptionPayloadSchema>;
 export type ReservationPayload = z.infer<typeof reservationPayloadSchema>;
+export type ReservationStatusPayload = z.infer<typeof reservationStatusPayloadSchema>;
 export type RegisterPayload = z.infer<typeof registerSchema>;
 export type ProductStatus = (typeof productStatuses)[number];
 export type GenerationStatus = (typeof generationStatuses)[number];
 export type ImageType = (typeof imageTypes)[number];
 export type UserRole = (typeof userRoles)[number];
+export type ReservationStatus = (typeof reservationStatuses)[number];
 
 export function formatHuf(price: number): string {
   return new Intl.NumberFormat("hu-HU", {

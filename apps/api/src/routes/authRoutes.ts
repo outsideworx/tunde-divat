@@ -68,6 +68,28 @@ authRoutes.get(
   })
 );
 
+authRoutes.get(
+  "/users",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    if (req.user!.role !== "ADMIN") throw new AppError(403, "Admin jogosultság szükséges.");
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        username: true,
+        lastName: true,
+        firstName: true,
+        phone: true,
+        email: true,
+        role: true,
+        createdAt: true
+      },
+      orderBy: { createdAt: "desc" }
+    });
+    res.json({ users });
+  })
+);
+
 authRoutes.put(
   "/invite-code",
   requireAuth,

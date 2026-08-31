@@ -26,7 +26,7 @@ export function errorHandler(err: Error, _req: Request, res: Response, _next: Ne
     err instanceof AppError
       ? err.message
       : isDatabaseConnectionError
-        ? "Az adatbázis nem elérhető. Indítsd el a MySQL szervert, majd futtasd a migrációt és a teszt felhasználók seedelését."
+        ? "Az adatbázis nem elérhető. Ellenőrizd a SQLite adatbázisfájlt, majd futtasd az inicializálást és a teszt felhasználók seedelését."
         : "Internal server error";
   if (!isProduction && !(err instanceof AppError)) {
     console.error(err);

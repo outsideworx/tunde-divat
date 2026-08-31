@@ -6,6 +6,8 @@ dist/
 coverage/
 uploads/
 apps/api/uploads/
+data/*
+!data/.gitkeep
 apps/*/dist/
 packages/*/dist/
 *.log

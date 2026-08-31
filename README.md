@@ -6,7 +6,7 @@ Webes, API-first MVP online ruhakereskedéshez. A rendszer célja, hogy a felhas
 
 - Monorepo: npm workspaces
 - Backend: Node.js, Express, TypeScript
-- Database: MySQL + Prisma ORM
+- Database: SQLite + Prisma ORM
 - Auth: HTTPOnly session cookie, JWT payload, Argon2id password hashing
 - Upload és képfeldolgozás: Multer 2, Sharp, local `StorageService`
 - Frontend: Vite, React, TypeScript, responsive CSS
@@ -20,7 +20,7 @@ apps/web      React mobil-webes felület
 packages/shared  közös validációk, státuszok, formázók
 ```
 
-## MySQL adatmodell
+## SQLite adatmodell
 
 A Prisma schema itt található: `apps/api/prisma/schema.prisma`.
 
@@ -44,28 +44,23 @@ cp .env.example .env
 Állítsd be a `.env` fájlban:
 
 ```bash
-DATABASE_URL="mysql://fashion_user:fashion_password@127.0.0.1:3306/fashion_mvp"
+DATABASE_URL="file:../../../data/tunde-divat.db"
 SESSION_SECRET="legalabb-32-karakteres-veletlen-string"
 CORS_ORIGIN="http://localhost:5173"
 AI_PROVIDER="mock"
+UPLOAD_DIR="./data/uploads"
 SEED_ADMIN_USERNAME="admin123"
 SEED_ADMIN_PASSWORD="admin1234"
 SEED_DUMMY_USERNAME="user123"
 SEED_DUMMY_PASSWORD="user1234"
 ```
 
-MySQL példa:
-
-```sql
-CREATE DATABASE fashion_mvp CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'fashion_user'@'localhost' IDENTIFIED BY 'fashion_password';
-GRANT ALL PRIVILEGES ON fashion_mvp.* TO 'fashion_user'@'localhost';
-```
+Az SQLite adatbázis a projekt gyökerében lévő `data/tunde-divat.db` fájlba kerül, a feltöltött és generált képek pedig a `data/uploads` mappába. Mentésnél ezt a két elemet érdemes együtt backupolni.
 
 Migráció és próba felhasználók seedelése:
 
 ```bash
-npm run prisma:migrate
+sqlite3 data/tunde-divat.db ".read apps/api/prisma/migrations/20260831100000_initial_sqlite/migration.sql"
 npm run seed --workspace @fashion-mvp/api
 ```
 
@@ -148,7 +143,7 @@ Jelenlegi automatizált tesztek:
 ## Roadmap
 
 1. Valódi AI image provider bekötése az `ImageGenerationService` mögé
-2. API integration tests MySQL test adatbázissal
+2. API integration tests SQLite test adatbázissal
 3. szerkesztő modal approved termékekhez
 4. CSRF védelem production cookie auth mellé
 5. object storage adapter

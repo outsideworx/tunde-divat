@@ -4,7 +4,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
-import { env } from "./config/env.js";
+import { env, isProduction } from "./config/env.js";
 import { authRoutes } from "./routes/authRoutes.js";
 import { productRoutes } from "./routes/productRoutes.js";
 import { imageRoutes } from "./routes/imageRoutes.js";
@@ -14,6 +14,12 @@ import { errorHandler } from "./utils/errors.js";
 
 export function createApp() {
   const app = express();
+  // Behind Traefik there is exactly one proxy hop. Trust that single hop so
+  // express-rate-limit reads the real client IP from X-Forwarded-For. A bounded
+  // value (not `true`) prevents clients from spoofing the header to evade limits.
+  if (isProduction) {
+    app.set("trust proxy", 1);
+  }
   const allowedOrigins = new Set([
     env.CORS_ORIGIN,
     "http://localhost:5173",

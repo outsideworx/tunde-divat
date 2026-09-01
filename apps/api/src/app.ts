@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
@@ -18,7 +20,21 @@ export function createApp() {
     "http://127.0.0.1:5173"
   ]);
   app.disable("x-powered-by");
-  app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: "cross-origin" },
+      contentSecurityPolicy: env.WEB_DIST_DIR
+        ? {
+            directives: {
+              ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+              "img-src": ["'self'", "data:", "blob:"],
+              "style-src": ["'self'", "'unsafe-inline'"],
+              "connect-src": ["'self'"]
+            }
+          }
+        : undefined
+    })
+  );
   app.use(
     cors({
       origin(origin, callback) {
@@ -40,6 +56,17 @@ export function createApp() {
   app.use("/api/pickups", pickupRoutes);
   app.use("/api/reservations", reservationRoutes);
   app.use("/api/images", imageRoutes);
+
+  if (env.WEB_DIST_DIR) {
+    const webDistDir = path.resolve(env.WEB_DIST_DIR);
+    const indexHtml = path.join(webDistDir, "index.html");
+    app.use(express.static(webDistDir));
+    app.get(/^(?!\/api\/).*/, (_req, res, next) => {
+      if (existsSync(indexHtml)) return res.sendFile(indexHtml);
+      return next();
+    });
+  }
+
   app.use(errorHandler);
   return app;
 }

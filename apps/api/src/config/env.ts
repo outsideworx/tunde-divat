@@ -12,6 +12,7 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().url().default("http://localhost:5173"),
   API_PORT: z.coerce.number().int().positive().default(4000),
   UPLOAD_DIR: z.string().default("./uploads"),
+  WEB_DIST_DIR: z.string().optional(),
   MAX_UPLOAD_MB: z.coerce.number().int().positive().default(12),
   AI_PROVIDER: z.enum(["mock", "openai"]).default("mock"),
   OPENAI_API_KEY: z.string().optional(),

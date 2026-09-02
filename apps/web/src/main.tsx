@@ -302,6 +302,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
 
   return (
     <main className="auth-shell">
+      <span className="build-version">ver.: alpha 0.1</span>
       <section className="brand-panel">
         <div />
         <div>

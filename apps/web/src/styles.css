@@ -82,6 +82,15 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   padding: 32px;
   background: linear-gradient(180deg, #fffaf4 0%, #f7efe4 100%);
 }
+.build-version {
+  position: fixed;
+  right: 16px;
+  bottom: 14px;
+  z-index: 20;
+  color: #8a8f98;
+  font-size: 12px;
+  font-weight: 800;
+}
 .auth-card {
   width: min(100%, 510px);
   display: grid;

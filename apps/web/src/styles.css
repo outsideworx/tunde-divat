@@ -429,6 +429,19 @@ textarea { min-height: 92px; resize: vertical; }
   color: #667085;
   font-size: 14px;
 }
+.checkbox-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  color: #344054;
+  font-weight: 800;
+}
+.checkbox-line input {
+  width: 18px;
+  min-height: 18px;
+  accent-color: #0f766e;
+}
 .deadline-buttons {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));

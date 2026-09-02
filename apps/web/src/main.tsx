@@ -1,6 +1,6 @@
 import { Fragment, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowLeft, Ban, Camera, Check, Download, Eye, FolderCheck, Heart, KeyRound, LogOut, Menu, PanelLeftClose, Plus, RefreshCcw, Search, Share2, ShoppingBag, Sparkles, Trash2, Upload, Users } from "lucide-react";
+import { ArrowLeft, Ban, Camera, Download, Eye, FolderCheck, Heart, KeyRound, LogOut, Menu, PanelLeftClose, Plus, RefreshCcw, Search, Share2, ShoppingBag, Sparkles, Trash2, Upload, Users } from "lucide-react";
 import { allowedSizes, formatHuf, reservationStatuses, type ReservationStatus } from "@fashion-mvp/shared";
 import "./styles.css";
 import { useEffect, useMemo, useState } from "react";
@@ -115,6 +115,18 @@ async function imageFileForShare(product: Product, image: ProductImage, variant:
   return new File([blob], shareFilename(product, variant, type), { type });
 }
 
+async function downloadProductImage(product: Product, image: ProductImage, variant: ShareVariant = "generated") {
+  const response = await fetch(imageUrl(image), { credentials: "include" });
+  if (!response.ok) throw new Error("A kép letöltése sikertelen.");
+  const blob = await response.blob();
+  const type = blob.type || response.headers.get("Content-Type") || "image/jpeg";
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = shareFilename(product, variant, type);
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
 function productShareText(product: Product) {
   return `${productTitle(product)} - ${formatHuf(product.price)}\nMéretek: ${product.sizes.map((s) => s.size).join("; ")}${product.description ? `\n${product.description}` : ""}`;
 }
@@ -148,6 +160,10 @@ function formatDateOnly(value?: string | null) {
   }).format(new Date(value));
 }
 
+function formatReservationDeadline(value?: string | null) {
+  return value ? formatDateTime(value) : "Lejárat nélkül";
+}
+
 function formatPickupRange(pickup?: PickupOption) {
   if (!pickup) return "Nincs megadva";
   const start = new Date(pickup.startAt);
@@ -176,7 +192,7 @@ function localDateAt(date: string, hour: number) {
 }
 
 function formatRemaining(value?: string | null) {
-  if (!value) return "Nincs határidő";
+  if (!value) return "Szabadon foglalható";
   const diff = new Date(value).getTime() - Date.now();
   if (diff <= 0) return "Lejárt";
   const hours = Math.floor(diff / (60 * 60 * 1000));
@@ -233,8 +249,8 @@ function App() {
 
 function Login({ onLogin }: { onLogin: (user: User) => void }) {
   const [authMode, setAuthMode] = useState<AuthMode>("login");
-  const [username, setUsername] = useState("admin123");
-  const [password, setPassword] = useState("admin1234");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [registerForm, setRegisterForm] = useState({
     username: "",
     last_name: "",
@@ -302,11 +318,6 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
           )}
           {error && <p className="error">{error}</p>}
           <button className="primary tdo-primary" type="submit">{authMode === "login" ? "Bejelentkezés" : "Regisztráció"}</button>
-          <div className="test-users">
-            <strong>Teszt belépések</strong>
-            <span>Admin: admin123 / admin1234</span>
-            <span>Felhasználó: user123 / user1234</span>
-          </div>
         </form>
       </section>
     </main>
@@ -954,7 +965,8 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
     category: "",
     description: "",
     reservable_until: "",
-    reservable_duration_hours: "24"
+    reservable_duration_hours: "24",
+    no_expiry: false
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -976,8 +988,8 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
           product_name: form.product_name || null,
           price: Number(form.price),
           category: form.category || null,
-          reservable_until: form.reservable_until ? new Date(form.reservable_until).toISOString() : null,
-          reservable_duration_hours: form.reservable_until ? null : Number(form.reservable_duration_hours)
+          reservable_until: form.no_expiry || !form.reservable_until ? null : new Date(form.reservable_until).toISOString(),
+          reservable_duration_hours: form.no_expiry || form.reservable_until ? null : Number(form.reservable_duration_hours)
         })
       });
       const fd = new FormData();
@@ -1032,8 +1044,10 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
           <ReservationDeadlinePicker
             durationHours={form.reservable_duration_hours}
             customDate={form.reservable_until}
+            noExpiry={form.no_expiry}
             onDuration={(reservable_duration_hours) => setForm({ ...form, reservable_duration_hours, reservable_until: "" })}
             onCustomDate={(reservable_until) => setForm({ ...form, reservable_until })}
+            onNoExpiry={(no_expiry) => setForm({ ...form, no_expiry, reservable_until: no_expiry ? "" : form.reservable_until })}
           />
           <label className="wide">
             Leírás
@@ -1079,23 +1093,33 @@ function Text({ label, value, onChange, type = "text" }: { label: string; value:
   return <label>{label}<input type={type} value={value} onChange={(e) => onChange(e.target.value)} /></label>;
 }
 
-function ReservationDeadlinePicker({ durationHours, customDate, onDuration, onCustomDate }: {
+function ReservationDeadlinePicker({ durationHours, customDate, noExpiry, onDuration, onCustomDate, onNoExpiry }: {
   durationHours: string;
   customDate: string;
+  noExpiry: boolean;
   onDuration: (hours: string) => void;
   onCustomDate: (date: string) => void;
+  onNoExpiry: (enabled: boolean) => void;
 }) {
   const options = ["2", "4", "6", "12", "24", "36", "48"];
   return (
     <fieldset className="deadline-picker wide">
       <legend>Foglalható eddig</legend>
       <p>A gyorsgombos határidő a honlapra megosztás pillanatától indul.</p>
+      <label className="checkbox-line">
+        <input type="checkbox" checked={noExpiry} onChange={(event) => onNoExpiry(event.target.checked)} />
+        Lejárat nélkül
+      </label>
       <div className="deadline-buttons">
         {options.map((hours) => (
           <button
             type="button"
-            className={!customDate && durationHours === hours ? "active" : ""}
-            onClick={() => onDuration(hours)}
+            className={!noExpiry && !customDate && durationHours === hours ? "active" : ""}
+            disabled={noExpiry}
+            onClick={() => {
+              onNoExpiry(false);
+              onDuration(hours);
+            }}
             key={hours}
           >
             +{hours} óra
@@ -1104,7 +1128,15 @@ function ReservationDeadlinePicker({ durationHours, customDate, onDuration, onCu
       </div>
       <label>
         Egyedi dátum és idő
-        <input type="datetime-local" value={customDate} onChange={(event) => onCustomDate(event.target.value)} />
+        <input
+          type="datetime-local"
+          value={customDate}
+          disabled={noExpiry}
+          onChange={(event) => {
+            onNoExpiry(false);
+            onCustomDate(event.target.value);
+          }}
+        />
       </label>
     </fieldset>
   );
@@ -1282,9 +1314,15 @@ function ShareCenter() {
     }
   }
 
-  async function publishEverywhere(product: Product, variant: ShareVariant) {
-    await publishToWebsite(product);
-    await shareToFacebook(product, variant);
+  async function downloadShareImage(product: Product, variant: ShareVariant) {
+    const image = variant === "raw" ? productOriginalImage(product) : productGeneratedImage(product);
+    if (!image) return;
+    setBusyId(product.id);
+    try {
+      await downloadProductImage(product, image, variant);
+    } finally {
+      setBusyId(null);
+    }
   }
 
   const originalOnly = products.filter((product) => productOriginalImage(product));
@@ -1296,39 +1334,36 @@ function ShareCenter() {
       {message && <p className="success">{message}</p>}
       <ShareSection
         title="AI nélküli képek"
-        hint="Eredeti feltöltött képek. Ezeket AI-generálás nélkül is kiteheted a honlapra, Facebookra, vagy mindkettőre egyszerre."
+        hint="Eredeti feltöltött képek. Ezeket AI-generálás nélkül is letöltheted vagy kiteheted a honlapra."
         products={originalOnly}
         variant="raw"
         busyId={busyId}
+        onDownload={downloadShareImage}
         onWebsite={publishToWebsite}
-        onFacebook={shareToFacebook}
-        onBoth={publishEverywhere}
         onDeleted={load}
       />
       <ShareSection
         title="AI-generált képek"
-        hint="AI-val előkészített képek, honlapra és Facebookra publikáláshoz."
+        hint="AI-val előkészített képek letöltéshez és honlapra publikáláshoz."
         products={generated}
         variant="generated"
         busyId={busyId}
+        onDownload={downloadShareImage}
         onWebsite={publishToWebsite}
-        onFacebook={shareToFacebook}
-        onBoth={publishEverywhere}
         onDeleted={load}
       />
     </>
   );
 }
 
-function ShareSection({ title, hint, products, variant, busyId, onWebsite, onFacebook, onBoth, onDeleted }: {
+function ShareSection({ title, hint, products, variant, busyId, onDownload, onWebsite, onDeleted }: {
   title: string;
   hint: string;
   products: Product[];
   variant: ShareVariant;
   busyId: number | null;
+  onDownload: (product: Product, variant: ShareVariant) => Promise<void>;
   onWebsite: (product: Product) => Promise<void>;
-  onFacebook: (product: Product, variant: ShareVariant) => Promise<void>;
-  onBoth: (product: Product, variant: ShareVariant) => Promise<void>;
   onDeleted: () => void;
 }) {
   const [visibleCount, setVisibleCount] = useState(25);
@@ -1354,9 +1389,8 @@ function ShareSection({ title, hint, products, variant, busyId, onWebsite, onFac
             product={product}
             variant={variant}
             busy={busyId === product.id}
+            onDownload={() => onDownload(product, variant)}
             onWebsite={() => onWebsite(product)}
-            onFacebook={() => onFacebook(product, variant)}
-            onBoth={() => onBoth(product, variant)}
             onDeleted={onDeleted}
             key={product.id}
           />
@@ -1372,7 +1406,7 @@ function ShareSection({ title, hint, products, variant, busyId, onWebsite, onFac
   );
 }
 
-function ShareCard({ product, variant, busy, onWebsite, onFacebook, onBoth, onDeleted }: { product: Product; variant: ShareVariant; busy: boolean; onWebsite: () => void; onFacebook: () => void; onBoth: () => void; onDeleted: () => void }) {
+function ShareCard({ product, variant, busy, onDownload, onWebsite, onDeleted }: { product: Product; variant: ShareVariant; busy: boolean; onDownload: () => void; onWebsite: () => void; onDeleted: () => void }) {
   const image = variant === "raw" ? productOriginalImage(product) : productGeneratedImage(product);
   const url = imageUrl(image);
   const waitingForAi = variant === "generated" && !image;
@@ -1405,9 +1439,8 @@ function ShareCard({ product, variant, busy, onWebsite, onFacebook, onBoth, onDe
           <dt>Állapot</dt><dd>{product.status === "APPROVED" ? "Honlapon" : "Nincs honlapon"}</dd>
         </dl>
         <div className="big-action-grid">
-          <button className="primary icon-text" disabled={busy || waitingForAi} onClick={onWebsite}><FolderCheck size={20} /> Honlapra</button>
-          <button className="secondary icon-text" disabled={busy || waitingForAi} onClick={onFacebook}><Share2 size={20} /> Facebookra</button>
-          <button className="tdo-primary icon-text" disabled={busy || waitingForAi} onClick={onBoth}><Check size={20} /> Mindkettőre</button>
+          <button className="primary icon-text" disabled={busy || !image} onClick={onDownload}><Download size={20} /> Kép letöltése</button>
+          <button className="secondary icon-text" disabled={busy || waitingForAi} onClick={onWebsite}><FolderCheck size={20} /> Honlapra</button>
           <button className="secondary icon-text" disabled={busy} onClick={() => setEditing((value) => !value)}><Eye size={20} /> Módosítás</button>
           <button className="danger icon-text" disabled={busy} onClick={remove}><Trash2 size={20} /> Törlés</button>
         </div>
@@ -1425,7 +1458,8 @@ function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () =
     available_sizes: product.sizes.map((size) => size.size),
     category: product.category ?? "",
     description: product.description ?? "",
-    reservable_until: toLocalDateTimeInput(product.reservableUntil)
+    reservable_until: toLocalDateTimeInput(product.reservableUntil),
+    no_expiry: !product.reservableUntil && !product.reservableDurationHours
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -1444,7 +1478,8 @@ function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () =
           available_sizes: form.available_sizes,
           category: form.category || null,
           description: form.description || null,
-          reservable_until: form.reservable_until ? new Date(form.reservable_until).toISOString() : null
+          reservable_until: form.no_expiry || !form.reservable_until ? null : new Date(form.reservable_until).toISOString(),
+          reservable_duration_hours: form.no_expiry || form.reservable_until ? null : product.reservableDurationHours ?? null
         })
       });
       onSaved();
@@ -1463,7 +1498,15 @@ function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () =
       <Text label="Ár (Ft)" type="number" value={form.price} onChange={(price) => setForm({ ...form, price })} />
       <SizePicker value={form.available_sizes} onChange={(available_sizes) => setForm({ ...form, available_sizes })} />
       <Text label="Kategória" value={form.category} onChange={(category) => setForm({ ...form, category })} />
-      <Text label="Foglalható eddig" type="datetime-local" value={form.reservable_until} onChange={(reservable_until) => setForm({ ...form, reservable_until })} />
+      <label className="checkbox-line wide">
+        <input
+          type="checkbox"
+          checked={form.no_expiry}
+          onChange={(event) => setForm({ ...form, no_expiry: event.target.checked, reservable_until: event.target.checked ? "" : form.reservable_until })}
+        />
+        Lejárat nélkül
+      </label>
+      <Text label="Foglalható eddig" type="datetime-local" value={form.reservable_until} onChange={(reservable_until) => setForm({ ...form, reservable_until, no_expiry: false })} />
       <label className="wide">
         Leírás
         <textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
@@ -1513,6 +1556,10 @@ function CurrentOfferings() {
   function reservationsForProduct(productId: number) {
     return reservations.filter((reservation) => reservation.productFk === productId);
   }
+  async function downloadCurrentImage(product: Product) {
+    const image = productDisplayImage(product);
+    if (image) await downloadProductImage(product, image, productGeneratedImage(product) ? "generated" : "raw");
+  }
   return (
     <>
       <header className="topbar"><h1>Jelenlegi kínálat</h1></header>
@@ -1547,7 +1594,7 @@ function CurrentOfferings() {
                       <td>{formatHuf(product.price)}</td>
                       <td>{product.sizes.map((s) => s.size).join("; ")}</td>
                       <td>{product.category || "-"}</td>
-                      <td>{formatDateTime(product.reservableUntil)}</td>
+                      <td>{formatReservationDeadline(product.reservableUntil)}</td>
                       <td>{reservedCount} db</td>
                       <td>
                         {productReservations.length ? (
@@ -1561,6 +1608,7 @@ function CurrentOfferings() {
                       <td>
                         <div className="table-actions">
                           <button className="secondary table-action-btn" onClick={() => setEditingId(editingId === product.id ? null : product.id)}>Módosítás</button>
+                          <button className="secondary table-action-btn" onClick={() => downloadCurrentImage(product)}>Letöltés</button>
                           <button className="danger table-action-btn" onClick={async () => { if (await deleteProduct(product)) await load(); }}>Törlés</button>
                         </div>
                       </td>
@@ -1791,14 +1839,11 @@ function Orders() {
     downloadFile(`tunde-divat-rendelok-rendelesek-${new Date().toISOString().slice(0, 10)}.xls`, html, "application/vnd.ms-excel;charset=utf-8");
   }
 
-  const grouped = reservations.reduce((groups, reservation) => {
-    const key = reservation.productFk;
-    const current = groups.get(key) ?? [];
-    current.push(reservation);
-    groups.set(key, current);
-    return groups;
-  }, new Map<number, Reservation[]>());
-  const productGroups = Array.from(grouped.values()).sort((a, b) => Number(a[0].product.displayNumber) - Number(b[0].product.displayNumber));
+  const sortedReservations = [...reservations].sort((a, b) => {
+    const displayDiff = Number(a.product.displayNumber) - Number(b.product.displayNumber);
+    if (Number.isFinite(displayDiff) && displayDiff !== 0) return displayDiff;
+    return new Date(b.reservedAt).getTime() - new Date(a.reservedAt).getTime();
+  });
 
   return (
     <>
@@ -1808,60 +1853,55 @@ function Orders() {
       </header>
       {error && <p className="error">{error}</p>}
       {message && <p className="success">{message}</p>}
-      <section className="orders-by-product">
-        {productGroups.map((group) => {
-          const product = group[0].product;
-          const total = group.reduce((sum, reservation) => sum + reservation.quantity, 0);
-          return (
-            <section className="panel order-product-panel" key={product.id}>
-              <div className="section-heading">
-                <div>
-                  <h2>{productTitle(product)}</h2>
-                  <p>{formatHuf(product.price)} | {total} db foglalva</p>
-                </div>
-                <strong>{group.length} rendelő</strong>
-              </div>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Felhasználó</th>
-                      <th>Méret</th>
-                      <th>Darab</th>
-                      <th>Átvétel</th>
-                      <th>Foglalás ideje</th>
-                      <th>Státusz</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {group.map((reservation) => (
-                      <tr key={reservation.id}>
-                        <td>{reservation.user?.username ?? "-"}</td>
-                        <td>{reservation.size}</td>
-                        <td>{reservation.quantity} db</td>
-                        <td>{reservation.pickup.address}, {formatPickupRange(reservation.pickup)}</td>
-                        <td>{formatDateTime(reservation.reservedAt)}</td>
-                        <td>
-                          <select
-                            className="status-select"
-                            value={reservation.status}
-                            disabled={busyId === reservation.id}
-                            onChange={(event) => updateReservationStatus(reservation, event.target.value as ReservationStatus)}
-                          >
-                            {reservationStatuses.map((status) => (
-                              <option value={status} key={status}>{reservationStatusLabels[status]}</option>
-                            ))}
-                          </select>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          );
-        })}
-        {!productGroups.length && <div className="panel empty-state">Még nincs aktív rendelés.</div>}
+      <section className="panel">
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Sorszám</th>
+                <th>Kép</th>
+                <th>Felhasználó</th>
+                <th>Ár</th>
+                <th>Méret</th>
+                <th>Darabszám</th>
+                <th>Átvétel</th>
+                <th>Foglalás ideje</th>
+                <th>Státusz</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedReservations.length ? sortedReservations.map((reservation) => {
+                const image = productDisplayImage(reservation.product);
+                return (
+                  <tr key={reservation.id}>
+                    <td>#{reservation.product.displayNumber}</td>
+                    <td>{image ? <img className="table-thumb" src={imageUrl(image)} alt={`Rendelt termék ${reservation.product.displayNumber}`} /> : "-"}</td>
+                    <td>{reservation.user?.username ?? "-"}</td>
+                    <td>{formatHuf(reservation.product.price)}</td>
+                    <td>{reservation.size}</td>
+                    <td>{reservation.quantity} db</td>
+                    <td>{reservation.pickup.address}, {formatPickupRange(reservation.pickup)}</td>
+                    <td>{formatDateTime(reservation.reservedAt)}</td>
+                    <td>
+                      <select
+                        className="status-select"
+                        value={reservation.status}
+                        disabled={busyId === reservation.id}
+                        onChange={(event) => updateReservationStatus(reservation, event.target.value as ReservationStatus)}
+                      >
+                        {reservationStatuses.map((status) => (
+                          <option value={status} key={status}>{reservationStatusLabels[status]}</option>
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
+                );
+              }) : (
+                <tr><td colSpan={9} className="empty-table-cell">Még nincs aktív rendelés.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
     </>
   );

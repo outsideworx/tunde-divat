@@ -58,6 +58,9 @@ type BeforeInstallPromptEvent = Event & {
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 };
 
+const REMEMBER_LOGIN_KEY = "tdo:remember-login";
+const REMEMBERED_USERNAME_KEY = "tdo:remembered-username";
+
 const reservationStatusLabels: Record<ReservationStatus, string> = {
   PROCUREMENT_PENDING: "Beszerzésre vár",
   ACQUIRED: "Beszerezve",
@@ -249,7 +252,8 @@ function App() {
 
 function Login({ onLogin }: { onLogin: (user: User) => void }) {
   const [authMode, setAuthMode] = useState<AuthMode>("login");
-  const [username, setUsername] = useState("");
+  const [rememberLogin, setRememberLogin] = useState(() => window.localStorage.getItem(REMEMBER_LOGIN_KEY) === "true");
+  const [username, setUsername] = useState(() => window.localStorage.getItem(REMEMBER_LOGIN_KEY) === "true" ? window.localStorage.getItem(REMEMBERED_USERNAME_KEY) ?? "" : "");
   const [password, setPassword] = useState("");
   const [registerForm, setRegisterForm] = useState({
     username: "",
@@ -269,6 +273,15 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
         method: "POST",
         body: JSON.stringify(authMode === "login" ? { username, password } : registerForm)
       });
+      if (authMode === "login") {
+        if (rememberLogin) {
+          window.localStorage.setItem(REMEMBER_LOGIN_KEY, "true");
+          window.localStorage.setItem(REMEMBERED_USERNAME_KEY, username);
+        } else {
+          window.localStorage.removeItem(REMEMBER_LOGIN_KEY);
+          window.localStorage.removeItem(REMEMBERED_USERNAME_KEY);
+        }
+      }
       onLogin(res.user);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sikertelen művelet");
@@ -277,6 +290,14 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
 
   function setRegister<K extends keyof typeof registerForm>(key: K, value: string) {
     setRegisterForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function updateRememberLogin(checked: boolean) {
+    setRememberLogin(checked);
+    if (!checked) {
+      window.localStorage.removeItem(REMEMBER_LOGIN_KEY);
+      window.localStorage.removeItem(REMEMBERED_USERNAME_KEY);
+    }
   }
 
   return (
@@ -288,7 +309,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
         </div>
       </section>
       <section className="auth-panel">
-        <form className="auth-card" onSubmit={submit}>
+        <form className="auth-card" onSubmit={submit} autoComplete={rememberLogin ? "on" : "off"}>
           <div className="auth-tabs">
             <button className={`tab-button ${authMode === "login" ? "active" : ""}`} type="button" onClick={() => setAuthMode("login")}>Bejelentkezés</button>
             <button className={`tab-button ${authMode === "register" ? "active" : ""}`} type="button" onClick={() => setAuthMode("register")}>Regisztráció</button>
@@ -298,13 +319,28 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
             <>
               <label>
                 Felhasználónév
-                <input value={username} onChange={(e) => setUsername(e.target.value)} type="text" autoComplete="username" />
+                <input
+                  value={username}
+                  name={rememberLogin ? "username" : "tdo-login-user"}
+                  onChange={(e) => setUsername(e.target.value)}
+                  type="text"
+                  autoComplete={rememberLogin ? "username" : "off"}
+                />
               </label>
               <label>
                 Jelszó
-                <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" autoComplete="current-password" />
+                <input
+                  value={password}
+                  name={rememberLogin ? "password" : "tdo-login-pass"}
+                  onChange={(e) => setPassword(e.target.value)}
+                  type="password"
+                  autoComplete={rememberLogin ? "current-password" : "new-password"}
+                />
               </label>
-              <label className="check-row"><input type="checkbox" /> <span>Emlékezzen rám</span></label>
+              <label className="check-row">
+                <input type="checkbox" checked={rememberLogin} onChange={(event) => updateRememberLogin(event.target.checked)} />
+                <span>Emlékezzen rám</span>
+              </label>
             </>
           ) : (
             <>

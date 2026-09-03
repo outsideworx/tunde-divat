@@ -1,7 +1,7 @@
 import { Fragment, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { ArrowLeft, Ban, Camera, Download, Eye, FolderCheck, Heart, KeyRound, LogOut, Menu, PanelLeftClose, Plus, RefreshCcw, Search, Share2, ShoppingBag, Sparkles, Trash2, Upload, Users } from "lucide-react";
-import { allowedSizes, formatHuf, reservationStatuses, type ReservationStatus } from "@fashion-mvp/shared";
+import { allowedSizes, formatHuf, type ReservationStatus } from "@fashion-mvp/shared";
 import "./styles.css";
 import { useEffect, useMemo, useState } from "react";
 
@@ -32,7 +32,7 @@ type Reservation = {
   id: number;
   productFk: number;
   userId: number;
-  pickupFk: number;
+  pickupFk?: number | null;
   size: string;
   quantity: number;
   status: ReservationStatus;
@@ -40,12 +40,21 @@ type Reservation = {
   reservedAt: string;
   cancelledAt?: string | null;
   product: Product;
-  pickup: PickupOption;
+  pickup?: PickupOption | null;
   user?: { id: number; username: string; email?: string | null };
 };
 
 type User = { id: number; username: string; email?: string | null; role: string };
-type RegisteredUser = User & { lastName?: string | null; firstName?: string | null; phone?: string | null; createdAt: string };
+type RegisteredUser = User & { lastName?: string | null; firstName?: string | null; phone?: string | null; isActive: boolean; privacyAcceptedAt?: string | null; createdAt: string };
+type RegisteredUserForm = {
+  username: string;
+  last_name: string;
+  first_name: string;
+  phone: string;
+  email: string;
+  role: "ADMIN" | "STAFF";
+  is_active: boolean;
+};
 type Step = "photo" | "data" | "saved";
 type View = "dashboard" | "storefront" | "new" | "ai" | "share" | "current" | "orders" | "pickup" | "deleted";
 type AdminView = View | "users";
@@ -60,12 +69,20 @@ type BeforeInstallPromptEvent = Event & {
 
 const REMEMBER_LOGIN_KEY = "tdo:remember-login";
 const REMEMBERED_USERNAME_KEY = "tdo:remembered-username";
+const PURCHASED_PROCUREMENT_ITEMS_KEY = "tdo:purchased-procurement-items";
 
 const reservationStatusLabels: Record<ReservationStatus, string> = {
   PROCUREMENT_PENDING: "Beszerzésre vár",
   ACQUIRED: "Beszerezve",
   IN_STOCK_WAITING_PICKUP: "Raktárkészleten, átvételre vár",
   PICKED_UP_PAID: "Átvéve, kifizetve"
+};
+const procurementStatuses: ReservationStatus[] = ["PROCUREMENT_PENDING", "ACQUIRED", "IN_STOCK_WAITING_PICKUP"];
+const customerFulfillmentStatuses: ReservationStatus[] = ["IN_STOCK_WAITING_PICKUP", "PICKED_UP_PAID"];
+const customerFulfillmentStatusLabels: Record<ReservationStatus, string> = {
+  ...reservationStatusLabels,
+  IN_STOCK_WAITING_PICKUP: "Átvételre vár",
+  PICKED_UP_PAID: "Átvette, kifizette"
 };
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -174,7 +191,7 @@ function formatDateOnly(value?: string | null) {
 }
 
 function formatPickupDay(value?: string | null) {
-  if (!value) return "Nincs dátum";
+  if (!value) return "Később egyeztetendő";
   return new Intl.DateTimeFormat("hu-HU", {
     month: "2-digit",
     day: "2-digit"
@@ -203,9 +220,25 @@ function formatPickupRange(pickup?: PickupOption) {
   return `${formatDateTime(pickup.startAt)} - ${formatDateTime(pickup.endAt)}`;
 }
 
+function pickupAddress(pickup?: PickupOption | null) {
+  return pickup?.address ?? "Később egyeztetendő";
+}
+
+function pickupRangeText(pickup?: PickupOption | null) {
+  return pickup ? formatPickupRange(pickup) : "Később egyeztetendő";
+}
+
+function groupDayLabel(day: string, value?: string | null) {
+  return day === "unknown" ? "Később egyeztetendő" : formatPickupDay(value);
+}
+
 function productTitle(product: Product) {
   const name = product.productName || product.category || product.description?.split(/[.\n]/)[0].trim().slice(0, 48) || "Termék";
   return `#${product.displayNumber} ${name}`;
+}
+
+function productNumberPair(product: Product) {
+  return `${product.productId} / #${product.displayNumber}`;
 }
 
 function customerProductTitle(product: Product) {
@@ -238,6 +271,20 @@ function formatRemaining(value?: string | null) {
   const pad = (value: number) => String(value).padStart(2, "0");
   if (totalSeconds < 3_600) return `${pad(minutes)}:${pad(seconds)}`;
   return `${pad(days)}:${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
+
+function formatCancelRemaining(reservation: Reservation) {
+  if (!reservation.canCancel) return "Nem lemondható";
+  const diff = new Date(reservation.reservedAt).getTime() + 10 * 60 * 1000 - Date.now();
+  if (diff <= 0) return "Lejárt";
+  const totalSeconds = Math.floor(diff / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function canCancelReservation(reservation: Reservation) {
+  return reservation.canCancel && new Date(reservation.reservedAt).getTime() + 10 * 60 * 1000 >= Date.now();
 }
 
 function isDeadlineUrgent(value?: string | null) {
@@ -277,10 +324,60 @@ function App() {
       .finally(() => setLoading(false));
   }, []);
 
+  if (window.location.pathname === "/adatkezelesi-tajekoztato") return <PrivacyNotice />;
   if (loading) return <div className="boot">Betöltés...</div>;
   if (!user) return <Login onLogin={setUser} />;
   if (user.role !== "ADMIN") return <CustomerStorefront user={user} onLogout={() => setUser(null)} />;
   return <Shell user={user} onLogout={() => setUser(null)} />;
+}
+
+function PrivacyNotice() {
+  return (
+    <main className="legal-page">
+      <article className="legal-card">
+        <img className="legal-logo" src="/assets/tunde-divat-online-logo.jpeg" alt="Tünde Divat Online" />
+        <p className="eyebrow">Adatkezelési tájékoztató</p>
+        <h1>Tünde Divat Online</h1>
+        <p>
+          A Tünde Divat Online foglalási felület használata során személyes adatokat kezelünk azért,
+          hogy a regisztráció, a termékfoglalás és az átvételi egyeztetés működni tudjon.
+        </p>
+        <h2>Adatkezelő</h2>
+        <p>
+          Tünde Divat Online<br />
+          Weboldal: www.tundedivat.com<br />
+          E-mail: rozalia.boa@gmail.com<br />
+          Telefonszám: +36 30 56 56 576
+        </p>
+        <h2>Kezelt adatok</h2>
+        <p>
+          Regisztrációkor a felhasználónevet, vezetéknevet, keresztnevet, telefonszámot, jelszót
+          technikailag védett formában, meghívókódot és az adatkezelési tájékoztató elfogadásának
+          időpontját kezeljük. Foglaláskor a termék, méret, darabszám, ár, foglalási időpont és
+          átvételi adatok kerülnek rögzítésre.
+        </p>
+        <h2>Az adatkezelés célja és jogalapja</h2>
+        <p>
+          Az adatkezelés célja a felhasználói fiók kezelése, a foglalások nyilvántartása, az átvétel
+          megszervezése és a kapcsolattartás. A regisztráció és a foglalási rendszer használata a
+          felhasználó hozzájárulásán, illetve a foglalás teljesítéséhez szükséges adatkezelésen alapul.
+        </p>
+        <h2>Adatmegőrzés és hozzáférés</h2>
+        <p>
+          Az adatokat addig kezeljük, amíg a fiók aktív, illetve amíg a foglalások teljesítéséhez,
+          nyilvántartásához vagy egyeztetéséhez szükséges. Az adatokhoz csak az arra jogosult
+          adminisztrátorok férhetnek hozzá.
+        </p>
+        <h2>Felhasználói jogok</h2>
+        <p>
+          A felhasználó kérhet tájékoztatást az adatkezelésről, kérheti adatai helyesbítését,
+          törlését, kezelésének korlátozását, valamint tiltakozhat az adatkezelés ellen. Panasz esetén
+          a Nemzeti Adatvédelmi és Információszabadság Hatósághoz lehet fordulni.
+        </p>
+        <a className="secondary legal-back" href="/">Vissza a bejelentkezéshez</a>
+      </article>
+    </main>
+  );
 }
 
 function Login({ onLogin }: { onLogin: (user: User) => void }) {
@@ -294,7 +391,8 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
     first_name: "",
     phone: "",
     password: "",
-    invite_code: ""
+    invite_code: "",
+    privacy_accepted: false
   });
   const [error, setError] = useState("");
 
@@ -321,7 +419,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
     }
   }
 
-  function setRegister<K extends keyof typeof registerForm>(key: K, value: string) {
+  function setRegister<K extends keyof typeof registerForm>(key: K, value: (typeof registerForm)[K]) {
     setRegisterForm((current) => ({ ...current, [key]: value }));
   }
 
@@ -337,10 +435,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
     <main className="auth-shell">
       <span className="build-version">ver.: alpha 0.3</span>
       <section className="brand-panel">
-        <div />
-        <div>
-          <img className="auth-logo" src="/assets/tunde-divat-online-logo.jpeg" alt="Tünde Divat Online" />
-        </div>
+        <span className="sr-only">Tünde Divat Online</span>
       </section>
       <section className="auth-panel">
         <form className="auth-card" onSubmit={submit} autoComplete={rememberLogin ? "on" : "off"}>
@@ -384,6 +479,16 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
               <label>Telefonszám<input value={registerForm.phone} onChange={(e) => setRegister("phone", e.target.value)} type="tel" autoComplete="tel" /></label>
               <label>Jelszó<input value={registerForm.password} onChange={(e) => setRegister("password", e.target.value)} type="password" autoComplete="new-password" /></label>
               <label>Meghívókód<input value={registerForm.invite_code} onChange={(e) => setRegister("invite_code", e.target.value)} type="text" /></label>
+              <label className="check-row privacy-consent">
+                <input
+                  checked={registerForm.privacy_accepted}
+                  onChange={(e) => setRegister("privacy_accepted", e.target.checked)}
+                  type="checkbox"
+                />
+                <span>
+                  Elolvastam és elfogadom az <a href="/adatkezelesi-tajekoztato" target="_blank" rel="noreferrer">adatkezelési tájékoztatót</a>.
+                </span>
+              </label>
             </>
           )}
           {error && <p className="error">{error}</p>}
@@ -500,7 +605,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
           <button className="logo-home-btn" onClick={() => goToStoreView("catalog")}><img className="header-logo" src="/assets/tunde-divat-online-logo.jpeg" alt="Tünde Divat Online" /></button>
           <div className="store-user">
             <span>{user.username} | felhasználó</span>
-            <strong>{storeView === "reservations" ? "Foglalásaim" : storeView === "favorites" ? "Kedvencek" : "Aktuális kínálat"}</strong>
+            <strong>{storeView === "reservations" ? "Foglalásaim" : storeView === "favorites" ? "Kívánságlistám" : "Aktuális kínálat"}</strong>
             <div className="header-reservation-summary">
               <span>Lefoglalt termékek száma: <strong>{reservationTotals.count} db</strong></span>
               <span>Fizetendő: <strong>{formatHuf(reservationTotals.amount)}</strong></span>
@@ -512,7 +617,9 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
           <button className={storeView === "reservations" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("reservations")}>
             Foglalásaim{reservationTotals.count > 0 ? ` (${reservationTotals.count})` : ""}
           </button>
-          <button className={storeView === "favorites" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("favorites")}>Kedvencek</button>
+          <button className={storeView === "favorites" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("favorites")}>
+            Kívánságlistám{favoriteProducts.length > 0 ? ` (${favoriteProducts.length})` : ""}
+          </button>
           {onBackToAdmin && <button className="secondary" onClick={onBackToAdmin}>Vissza az adminhoz</button>}
           <button className="ghost" onClick={logout}>Kijelentkezés</button>
         </nav>
@@ -528,7 +635,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
             onClose={closeProductDetail}
             onToggleFavorite={() => toggleFavorite(detailProduct)}
             onReserved={async () => {
-              setMessage("A foglalás sikeres. Az admin felületen látszani fog, melyik átvételi időpontot választottad.");
+              setMessage("A foglalás sikeres. Az admin felületen látszani fog, mit foglaltál; az átvételi időpont később is egyeztethető.");
               await loadStoreData();
             }}
           />
@@ -541,6 +648,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
           <ReservationsPage
             reservations={reservations}
             pickups={pickups}
+            tick={tick}
             onBackToCatalog={() => setStoreView("catalog")}
             onUpdatePickup={async (reservation, pickupId) => {
               await api(`/api/reservations/${reservation.id}/pickup`, {
@@ -551,7 +659,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
               await loadStoreData();
             }}
             onCancel={async (reservation) => {
-              const confirmed = window.confirm("Biztosan lemondod ezt a foglalást? Ha ugyanezt a terméket később újra lefoglalod, az új foglalást már nem fogod tudni lemondani.");
+              const confirmed = window.confirm("Biztosan lemondod ezt a foglalást? Foglalás után erre csak 10 percig van lehetőség, és ha ugyanezt a terméket később újra lefoglalod, azt már nem fogod tudni lemondani.");
               if (!confirmed) return;
               await api(`/api/reservations/${reservation.id}`, { method: "DELETE" });
               setMessage("A foglalást lemondtuk.");
@@ -562,7 +670,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
           <>
             <section className="store-toolbar single-toolbar">
               <div>
-                <h2>Kedvencek</h2>
+                <h2>Kívánságlistám</h2>
                 <span>{favoriteProducts.length} tétel</span>
               </div>
             </section>
@@ -573,7 +681,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
               onOpenDetail={openProductDetail}
               tick={tick}
             />
-            {!favoriteProducts.length && <div className="panel empty-state">Még nincs kedvenc terméked.</div>}
+            {!favoriteProducts.length && <div className="panel empty-state">Még nincs termék a kívánságlistádon.</div>}
           </>
         ) : (
           <>
@@ -618,7 +726,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
         </button>
         <button className={storeView === "favorites" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("favorites")}>
           <Heart size={20} fill={storeView === "favorites" && !detailProductId ? "currentColor" : "none"} />
-          <span>Kedvencek</span>
+          <span>Kívánságlistám{favoriteProducts.length > 0 ? ` (${favoriteProducts.length})` : ""}</span>
         </button>
         <button className={storeView === "reservations" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("reservations")}>
           <FolderCheck size={20} />
@@ -656,9 +764,10 @@ function ProductGrid({ products, favoriteIds, onToggleFavorite, onOpenDetail, ti
   );
 }
 
-function ReservationsPage({ reservations, pickups, onBackToCatalog, onUpdatePickup, onCancel }: {
+function ReservationsPage({ reservations, pickups, tick, onBackToCatalog, onUpdatePickup, onCancel }: {
   reservations: Reservation[];
   pickups: PickupOption[];
+  tick: number;
   onBackToCatalog: () => void;
   onUpdatePickup: (reservation: Reservation, pickupId: number) => Promise<void>;
   onCancel: (reservation: Reservation) => Promise<void>;
@@ -705,6 +814,7 @@ function ReservationsPage({ reservations, pickups, onBackToCatalog, onUpdatePick
               <th>Fizetendő</th>
               <th>Átvétel helye</th>
               <th>Átvétel ideje</th>
+              <th>Lemondható eddig</th>
               <th>Foglalás módosítása</th>
             </tr>
           </thead>
@@ -724,22 +834,24 @@ function ReservationsPage({ reservations, pickups, onBackToCatalog, onUpdatePick
                   </td>
                   <td>{reservation.size}</td>
                   <td>{formatHuf(reservation.product.price * reservation.quantity)}</td>
-                  <td>{reservation.pickup.address}</td>
-                  <td>{formatPickupRange(reservation.pickup)}</td>
+                  <td>{pickupAddress(reservation.pickup)}</td>
+                  <td>{pickupRangeText(reservation.pickup)}</td>
+                  <td><span className={canCancelReservation(reservation) ? "cancel-countdown" : "cancel-countdown expired"}>{tick >= 0 ? formatCancelRemaining(reservation) : ""}</span></td>
                   <td>
                     <div className="reservation-edit-actions">
                       <select
                         className="status-select"
-                        value={reservation.pickupFk}
+                        value={reservation.pickupFk ?? ""}
                         disabled={busyReservationId === reservation.id || pickups.length === 0}
                         onChange={(event) => updatePickup(reservation, Number(event.target.value))}
                       >
+                        <option value="" disabled>Válassz átvételi időpontot</option>
                         {pickups.map((pickup) => (
                           <option value={pickup.id} key={pickup.id}>{pickup.address} | {formatPickupRange(pickup)}</option>
                         ))}
                       </select>
-                      <button className="ghost table-action-btn" disabled={!reservation.canCancel} onClick={() => onCancel(reservation)}>
-                        {reservation.canCancel ? "Foglalás lemondása" : "Nem lemondható"}
+                      <button className="ghost table-action-btn" disabled={!canCancelReservation(reservation)} onClick={() => onCancel(reservation)}>
+                        {canCancelReservation(reservation) ? "Foglalás lemondása" : "Nem lemondható"}
                       </button>
                     </div>
                   </td>
@@ -747,7 +859,7 @@ function ReservationsPage({ reservations, pickups, onBackToCatalog, onUpdatePick
               );
             }) : (
               <tr>
-                <td colSpan={7} className="empty-table-cell">Még nincs foglalásod.</td>
+                <td colSpan={8} className="empty-table-cell">Még nincs foglalásod.</td>
               </tr>
             )}
           </tbody>
@@ -770,7 +882,7 @@ function StoreProductCard({ product, isFavorite, onToggleFavorite, onOpenDetail,
         <button className="store-image-button" onClick={onOpenDetail}>
           <img src={imageUrl(displayImage)} alt={customerProductTitle(product)} />
         </button>
-        <button className={`favorite-button ${isFavorite ? "active" : ""}`} onClick={onToggleFavorite} aria-label={isFavorite ? "Eltávolítás a kedvencekből" : "Kedvencekhez adás"}>
+        <button className={`favorite-button ${isFavorite ? "active" : ""}`} onClick={onToggleFavorite} aria-label={isFavorite ? "Eltávolítás a kívánságlistából" : "Kívánságlistához adás"}>
           <Heart size={20} fill={isFavorite ? "currentColor" : "none"} />
         </button>
       </div>
@@ -814,16 +926,16 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
     setError("");
     if (!size) return setError("Válassz méretet a foglaláshoz.");
     const selectedPickup = earliestPickup ?? pickups[0];
-    if (!selectedPickup) return setError("Nincs megadva személyes átvételi időpont.");
+    const pickupLine = selectedPickup ? `${selectedPickup.address}, ${formatPickupRange(selectedPickup)}` : "Az átvételi időpontot később egyeztetjük.";
     const confirmed = window.confirm(
-      `Kérjük, csak akkor erősítsd meg a foglalást, ha biztosan át tudod venni a terméket a választott időpontban.\n\nTermék: ${customerProductTitle(product)}\nMéret: ${size}\nDarabszám: ${quantity} db\nÁtvétel: ${selectedPickup ? `${selectedPickup.address}, ${formatPickupRange(selectedPickup)}` : ""}\n\nMegerősíted a foglalást?`
+      `Kérjük, csak akkor erősítsd meg a foglalást, ha biztosan át tudod venni a terméket.\n\nTermék: ${customerProductTitle(product)}\nMéret: ${size}\nDarabszám: ${quantity} db\nÁtvétel: ${pickupLine}\n\nMegerősíted a foglalást?`
     );
     if (!confirmed) return;
     setBusy(true);
     try {
       await api("/api/reservations", {
         method: "POST",
-        body: JSON.stringify({ product_id: product.id, size, pickup_id: selectedPickup.id, quantity })
+        body: JSON.stringify({ product_id: product.id, size, pickup_id: selectedPickup?.id ?? null, quantity })
       });
       await onReserved();
     } catch (err) {
@@ -852,7 +964,7 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
             <em>db</em>
           </div>
           {activeReservation ? (
-            <p className="reserved own-reservation">Saját foglalás: {activeReservation.size}, átvétel: {formatPickupRange(activeReservation.pickup)}</p>
+            <p className="reserved own-reservation">Saját foglalás: {activeReservation.size}, átvétel: {pickupRangeText(activeReservation.pickup)}</p>
           ) : (
           <div className="reserve-size-panel">
             <label>
@@ -864,7 +976,7 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
           </div>
           )}
           {error && <p className="error">{error}</p>}
-          <button className="tdo-primary icon-text modal-reserve-button" disabled={busy || !!activeReservation || deadlineExpired || !pickups.length} onClick={reserve}>
+          <button className="tdo-primary icon-text modal-reserve-button" disabled={busy || !!activeReservation || deadlineExpired} onClick={reserve}>
             <ShoppingBag size={18} /> {deadlineExpired ? "A foglalási határidő lejárt" : activeReservation ? "Már lefoglalva" : "Lefoglalom személyes átvételre"}
           </button>
           <div className="detail-facts">
@@ -1839,7 +1951,11 @@ function DeletedProducts() {
 
 function RegisteredUsers() {
   const [users, setUsers] = useState<RegisteredUser[]>([]);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState<RegisteredUserForm | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
   async function load() {
     const res = await api<{ users: RegisteredUser[] }>("/api/auth/users");
@@ -1850,12 +1966,99 @@ function RegisteredUsers() {
     load().catch((err) => setError(err instanceof Error ? err.message : "A felhasználók betöltése sikertelen."));
   }, []);
 
+  function startEdit(user: RegisteredUser) {
+    setEditingId(user.id);
+    setEditForm({
+      username: user.username,
+      last_name: user.lastName ?? "",
+      first_name: user.firstName ?? "",
+      phone: user.phone ?? "",
+      email: user.email ?? "",
+      role: user.role === "ADMIN" ? "ADMIN" : "STAFF",
+      is_active: user.isActive
+    });
+    setError("");
+    setMessage("");
+  }
+
+  function updateEdit<K extends keyof RegisteredUserForm>(key: K, value: RegisteredUserForm[K]) {
+    setEditForm((current) => current ? { ...current, [key]: value } : current);
+  }
+
+  async function saveUser(user: RegisteredUser) {
+    if (!editForm) return;
+    setBusyId(user.id);
+    setError("");
+    setMessage("");
+    try {
+      await api(`/api/auth/users/${user.id}`, {
+        method: "PUT",
+        body: JSON.stringify(editForm)
+      });
+      setEditingId(null);
+      setEditForm(null);
+      setMessage("A felhasználó adatai frissültek.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "A felhasználó mentése sikertelen.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function toggleActive(user: RegisteredUser) {
+    const nextActive = !user.isActive;
+    const confirmed = window.confirm(nextActive ? "Aktiválod ezt a felhasználót?" : "Inaktiválod ezt a felhasználót? A korábbi foglalásai megmaradnak, de nem fog tudni belépni.");
+    if (!confirmed) return;
+    setBusyId(user.id);
+    setError("");
+    setMessage("");
+    try {
+      await api(`/api/auth/users/${user.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          username: user.username,
+          email: user.email ?? "",
+          last_name: user.lastName ?? "",
+          first_name: user.firstName ?? "",
+          phone: user.phone ?? "",
+          role: user.role === "ADMIN" ? "ADMIN" : "STAFF",
+          is_active: nextActive
+        })
+      });
+      setMessage(nextActive ? "A felhasználó aktiválva." : "A felhasználó inaktiválva.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "A felhasználó állapotának módosítása sikertelen.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function anonymizeUser(user: RegisteredUser) {
+    const confirmed = window.confirm("Biztosan törlöd/anonimizálod a személyes adatokat? A rendelési statisztika megmarad, de a név, telefon és e-mail törlődik.");
+    if (!confirmed) return;
+    setBusyId(user.id);
+    setError("");
+    setMessage("");
+    try {
+      await api(`/api/auth/users/${user.id}/anonymize`, { method: "POST" });
+      setMessage("A felhasználó személyes adatai anonimizálva lettek.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Az anonimizálás sikertelen.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <>
       <header className="topbar">
         <h1>Regisztrált felhasználók</h1>
       </header>
       {error && <p className="error">{error}</p>}
+      {message && <p className="success">{message}</p>}
       <section className="panel">
         <div className="table-wrap">
           <table>
@@ -1867,22 +2070,61 @@ function RegisteredUsers() {
                 <th>Telefonszám</th>
                 <th>E-mail</th>
                 <th>Jogosultság</th>
+                <th>Állapot</th>
+                <th>Adatkezelés elfogadva</th>
                 <th>Regisztráció</th>
+                <th>Művelet</th>
               </tr>
             </thead>
             <tbody>
-              {users.length ? users.map((registeredUser) => (
-                <tr key={registeredUser.id}>
-                  <td>{registeredUser.username}</td>
-                  <td>{registeredUser.lastName || "-"}</td>
-                  <td>{registeredUser.firstName || "-"}</td>
-                  <td>{registeredUser.phone || "-"}</td>
-                  <td>{registeredUser.email || "-"}</td>
-                  <td>{registeredUser.role === "ADMIN" ? "Admin" : "Felhasználó"}</td>
-                  <td>{formatDateTime(registeredUser.createdAt)}</td>
-                </tr>
-              )) : (
-                <tr><td colSpan={7} className="empty-table-cell">Még nincs regisztrált felhasználó.</td></tr>
+              {users.length ? users.map((registeredUser) => {
+                const isEditing = editingId === registeredUser.id && editForm;
+                return (
+                  <tr key={registeredUser.id}>
+                    <td>{isEditing ? <input value={editForm.username} onChange={(e) => updateEdit("username", e.target.value)} /> : registeredUser.username}</td>
+                    <td>{isEditing ? <input value={editForm.last_name} onChange={(e) => updateEdit("last_name", e.target.value)} /> : registeredUser.lastName || "-"}</td>
+                    <td>{isEditing ? <input value={editForm.first_name} onChange={(e) => updateEdit("first_name", e.target.value)} /> : registeredUser.firstName || "-"}</td>
+                    <td>{isEditing ? <input value={editForm.phone} onChange={(e) => updateEdit("phone", e.target.value)} /> : registeredUser.phone || "-"}</td>
+                    <td>{isEditing ? <input value={editForm.email} onChange={(e) => updateEdit("email", e.target.value)} type="email" /> : registeredUser.email || "-"}</td>
+                    <td>
+                      {isEditing ? (
+                        <select value={editForm.role} onChange={(e) => updateEdit("role", e.target.value as RegisteredUserForm["role"])}>
+                          <option value="STAFF">Felhasználó</option>
+                          <option value="ADMIN">Admin</option>
+                        </select>
+                      ) : registeredUser.role === "ADMIN" ? "Admin" : "Felhasználó"}
+                    </td>
+                    <td>
+                      {isEditing ? (
+                        <label className="table-checkbox" aria-label="Felhasználó aktív">
+                          <input type="checkbox" checked={editForm.is_active} onChange={(e) => updateEdit("is_active", e.target.checked)} />
+                        </label>
+                      ) : registeredUser.isActive ? "Aktív" : "Inaktív"}
+                    </td>
+                    <td>{registeredUser.privacyAcceptedAt ? formatDateTime(registeredUser.privacyAcceptedAt) : "-"}</td>
+                    <td>{formatDateTime(registeredUser.createdAt)}</td>
+                    <td>
+                      <div className="table-actions stacked-actions">
+                        {isEditing ? (
+                          <>
+                            <button className="primary table-action-btn" disabled={busyId === registeredUser.id} onClick={() => saveUser(registeredUser)}>Mentés</button>
+                            <button className="secondary table-action-btn" disabled={busyId === registeredUser.id} onClick={() => { setEditingId(null); setEditForm(null); }}>Mégse</button>
+                          </>
+                        ) : (
+                          <>
+                            <button className="secondary table-action-btn" disabled={busyId === registeredUser.id} onClick={() => startEdit(registeredUser)}>Módosítás</button>
+                            <button className="secondary table-action-btn" disabled={busyId === registeredUser.id} onClick={() => toggleActive(registeredUser)}>
+                              {registeredUser.isActive ? "Inaktiválás" : "Aktiválás"}
+                            </button>
+                            <button className="danger table-action-btn" disabled={busyId === registeredUser.id} onClick={() => anonymizeUser(registeredUser)}>Személyes adatok törlése</button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              }) : (
+                <tr><td colSpan={10} className="empty-table-cell">Még nincs regisztrált felhasználó.</td></tr>
               )}
             </tbody>
           </table>
@@ -1894,6 +2136,7 @@ function RegisteredUsers() {
 
 function Orders() {
   const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [purchasedProcurementKeys, setPurchasedProcurementKeys] = useState<string[]>([]);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -1905,6 +2148,17 @@ function Orders() {
 
   useEffect(() => {
     load().catch((err) => setError(err instanceof Error ? err.message : "A rendelések betöltése sikertelen."));
+  }, []);
+
+  useEffect(() => {
+    const raw = window.localStorage.getItem(PURCHASED_PROCUREMENT_ITEMS_KEY);
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) setPurchasedProcurementKeys(parsed.filter((item) => typeof item === "string"));
+    } catch {
+      setPurchasedProcurementKeys([]);
+    }
   }, []);
 
   async function updateReservationStatus(reservation: Reservation, status: ReservationStatus) {
@@ -1925,21 +2179,55 @@ function Orders() {
     }
   }
 
+  function procurementKey(product: Product, size: string) {
+    return `${product.id}:${size}`;
+  }
+
+  function togglePurchasedProcurementItem(key: string) {
+    setPurchasedProcurementKeys((current) => {
+      const next = current.includes(key) ? current.filter((item) => item !== key) : [...current, key];
+      window.localStorage.setItem(PURCHASED_PROCUREMENT_ITEMS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
+
   function exportOrdersXls() {
-    downloadCsv(`tunde-divat-rendelok-rendelesek-${new Date().toISOString().slice(0, 10)}.csv`, [
-      ["Sorszám", "Termék", "Felhasználó", "Méret", "Darab", "Ár Ft", "Státusz", "Átvétel helye", "Átvétel ideje", "Foglalás ideje"],
-      ...reservations.map((reservation) => [
-        `#${reservation.product.displayNumber}`,
-        productTitle(reservation.product),
-        reservation.user?.username ?? "-",
-        reservation.size,
-        reservation.quantity,
-        reservation.product.price,
-        reservationStatusLabels[reservation.status],
-        reservation.pickup.address,
-        formatPickupRange(reservation.pickup),
-        formatDateTime(reservation.reservedAt)
+    const rows: Array<Array<string | number | null | undefined>> = [
+      ["Összesen vásárlandó"],
+      ["Product ID", "Sorszám", "Termék", "Méret", "Összesen vásárlandó", "Megvéve"],
+      ...procurementGroups.map((group) => [
+        group.product.productId,
+        `#${group.product.displayNumber}`,
+        productTitle(group.product),
+        group.size,
+        `${group.quantity} db`,
+        purchasedProcurementKeys.includes(procurementKey(group.product, group.size)) ? "Igen" : ""
+      ]),
+      [],
+      ["Rendelések termék szerint"],
+      ["Product ID", "Sorszám", "Termék", "Méret", "Lefoglalt darabszám", "Foglaló felhasználó és foglalás ideje", "Státusz"],
+      ...procurementGroups.map((group) => [
+        group.product.productId,
+        `#${group.product.displayNumber}`,
+        productTitle(group.product),
+        group.size,
+        `${group.quantity} db`,
+        group.reservations.map((reservation) => `${reservation.user?.username ?? "-"} - ${formatDateTime(reservation.reservedAt)}`).join(" | "),
+        group.reservations.map((reservation) => reservationStatusLabels[reservation.status]).join(" | ")
+      ]),
+      [],
+      ["Rendelések felhasználók szerint"],
+      ["Felhasználó", "Rendelések", "Összes darab", "Fizetendő", "Státusz"],
+      ...reservationsByUser.map((group) => [
+        group.username,
+        group.reservations.map((reservation) => `${productNumberPair(reservation.product)} / ${productTitle(reservation.product)} / ${reservation.size} / ${reservation.quantity} db`).join(" | "),
+        `${group.quantity} db`,
+        group.amount,
+        group.reservations.map((reservation) => customerFulfillmentStatusLabels[reservation.status]).join(" | ")
       ])
+    ];
+    downloadCsv(`tunde-divat-rendelok-rendelesek-${new Date().toISOString().slice(0, 10)}.csv`, [
+      ...rows
     ]);
   }
 
@@ -1948,6 +2236,24 @@ function Orders() {
     if (Number.isFinite(displayDiff) && displayDiff !== 0) return displayDiff;
     return new Date(b.reservedAt).getTime() - new Date(a.reservedAt).getTime();
   });
+  const procurementGroups = Array.from(sortedReservations.reduce((groups, reservation) => {
+    const key = procurementKey(reservation.product, reservation.size);
+    const group = groups.get(key) ?? { product: reservation.product, size: reservation.size, quantity: 0, reservations: [] as Reservation[] };
+    group.quantity += reservation.quantity;
+    group.reservations.push(reservation);
+    groups.set(key, group);
+    return groups;
+  }, new Map<string, { product: Product; size: string; quantity: number; reservations: Reservation[] }>()).values());
+  const reservationsByUser = Array.from(sortedReservations.reduce((groups, reservation) => {
+    const username = reservation.user?.username ?? "-";
+    const group = groups.get(username) ?? { username, quantity: 0, amount: 0, reservations: [] as Reservation[] };
+    group.quantity += reservation.quantity;
+    group.amount += reservation.product.price * reservation.quantity;
+    group.reservations.push(reservation);
+    groups.set(username, group);
+    return groups;
+  }, new Map<string, { username: string; quantity: number; amount: number; reservations: Reservation[] }>()).values())
+    .sort((a, b) => a.username.localeCompare(b.username, "hu"));
 
   return (
     <>
@@ -1958,50 +2264,159 @@ function Orders() {
       {error && <p className="error">{error}</p>}
       {message && <p className="success">{message}</p>}
       <section className="panel">
+        <div className="section-heading">
+          <h2>Összesen vásárlandó</h2>
+          <span>{procurementGroups.length} termék-méret sor</span>
+        </div>
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
+                <th>Product ID</th>
                 <th>Sorszám</th>
-                <th>Kép</th>
-                <th>Felhasználó</th>
-                <th>Ár</th>
+                <th>Termék</th>
                 <th>Méret</th>
-                <th>Darabszám</th>
-                <th>Átvétel</th>
-                <th>Foglalás ideje</th>
-                <th>Státusz</th>
+                <th>Összesen vásárlandó</th>
+                <th>Megvéve</th>
               </tr>
             </thead>
             <tbody>
-              {sortedReservations.length ? sortedReservations.map((reservation) => {
-                const image = productDisplayImage(reservation.product);
+              {procurementGroups.length ? procurementGroups.map((group) => {
+                const key = procurementKey(group.product, group.size);
                 return (
-                  <tr key={reservation.id}>
-                    <td>#{reservation.product.displayNumber}</td>
-                    <td>{image ? <img className="table-thumb" src={imageUrl(image)} alt={`Rendelt termék ${reservation.product.displayNumber}`} /> : "-"}</td>
-                    <td>{reservation.user?.username ?? "-"}</td>
-                    <td>{formatHuf(reservation.product.price)}</td>
-                    <td>{reservation.size}</td>
-                    <td>{reservation.quantity} db</td>
-                    <td>{reservation.pickup.address}, {formatPickupRange(reservation.pickup)}</td>
-                    <td>{formatDateTime(reservation.reservedAt)}</td>
+                  <tr key={key}>
+                    <td>{group.product.productId}</td>
+                    <td>#{group.product.displayNumber}</td>
+                    <td>{productTitle(group.product)}</td>
+                    <td>{group.size}</td>
+                    <td><strong>{group.quantity} db</strong></td>
                     <td>
-                      <select
-                        className="status-select"
-                        value={reservation.status}
-                        disabled={busyId === reservation.id}
-                        onChange={(event) => updateReservationStatus(reservation, event.target.value as ReservationStatus)}
-                      >
-                        {reservationStatuses.map((status) => (
-                          <option value={status} key={status}>{reservationStatusLabels[status]}</option>
-                        ))}
-                      </select>
+                      <label className="table-checkbox" aria-label={`${productNumberPair(group.product)} ${group.size} megvéve`}>
+                        <input type="checkbox" checked={purchasedProcurementKeys.includes(key)} onChange={() => togglePurchasedProcurementItem(key)} />
+                      </label>
                     </td>
                   </tr>
                 );
               }) : (
-                <tr><td colSpan={9} className="empty-table-cell">Még nincs aktív rendelés.</td></tr>
+                <tr><td colSpan={6} className="empty-table-cell">Még nincs vásárlandó termék.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section className="panel">
+        <div className="section-heading">
+          <h2>Rendelések termék szerint</h2>
+          <span>{sortedReservations.length} aktív foglalás</span>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Product ID</th>
+                <th>Sorszám</th>
+                <th>Kép</th>
+                <th>Méret</th>
+                <th>Lefoglalt darabszám</th>
+                <th>Foglaló felhasználó, foglalás ideje</th>
+                <th>Státusz</th>
+              </tr>
+            </thead>
+            <tbody>
+              {procurementGroups.length ? procurementGroups.map((group) => {
+                const image = productDisplayImage(group.product);
+                return (
+                  <tr key={`${group.product.id}-${group.size}`}>
+                    <td>{group.product.productId}</td>
+                    <td>#{group.product.displayNumber}</td>
+                    <td>{image ? <img className="table-thumb" src={imageUrl(image)} alt={`Rendelt termék ${group.product.displayNumber}`} /> : "-"}</td>
+                    <td>{group.size}</td>
+                    <td><strong>{group.quantity} db</strong></td>
+                    <td>
+                      <div className="order-lines">
+                        {group.reservations.map((reservation) => (
+                          <span key={reservation.id}>{reservation.user?.username ?? "-"} | {formatDateTime(reservation.reservedAt)}</span>
+                        ))}
+                      </div>
+                    </td>
+                    <td>
+                      <div className="order-status-lines">
+                        {group.reservations.map((reservation) => (
+                          <select
+                            className="status-select"
+                            value={procurementStatuses.includes(reservation.status) ? reservation.status : "IN_STOCK_WAITING_PICKUP"}
+                            disabled={busyId === reservation.id}
+                            onChange={(event) => updateReservationStatus(reservation, event.target.value as ReservationStatus)}
+                            key={reservation.id}
+                          >
+                            {procurementStatuses.map((status) => (
+                              <option value={status} key={status}>{reservationStatusLabels[status]}</option>
+                            ))}
+                          </select>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              }) : (
+                <tr><td colSpan={7} className="empty-table-cell">Még nincs aktív rendelés.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section className="panel">
+        <div className="section-heading">
+          <h2>Rendelések felhasználók szerint</h2>
+          <span>{reservationsByUser.length} rendelő</span>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Felhasználó</th>
+                <th>Rendelések</th>
+                <th>Összes darab</th>
+                <th>Fizetendő</th>
+                <th>Státusz</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reservationsByUser.length ? reservationsByUser.map((group) => (
+                <tr key={group.username}>
+                  <td>{group.username}</td>
+                  <td>
+                    <div className="order-lines">
+                      {group.reservations.map((reservation) => (
+                        <span key={reservation.id}>{productNumberPair(reservation.product)} | {productTitle(reservation.product)} | {reservation.size} | {reservation.quantity} db</span>
+                      ))}
+                    </div>
+                  </td>
+                  <td><strong>{group.quantity} db</strong></td>
+                  <td>{formatHuf(group.amount)}</td>
+                  <td>
+                    <div className="order-status-lines">
+                      {group.reservations.map((reservation) => {
+                        const value: ReservationStatus = reservation.status === "PICKED_UP_PAID" ? "PICKED_UP_PAID" : "IN_STOCK_WAITING_PICKUP";
+                        return (
+                          <select
+                            className="status-select"
+                            value={value}
+                            disabled={busyId === reservation.id}
+                            onChange={(event) => updateReservationStatus(reservation, event.target.value as ReservationStatus)}
+                            key={reservation.id}
+                          >
+                            {customerFulfillmentStatuses.map((status) => (
+                              <option value={status} key={status}>{customerFulfillmentStatusLabels[status]}</option>
+                            ))}
+                          </select>
+                        );
+                      })}
+                    </div>
+                  </td>
+                </tr>
+              )) : (
+                <tr><td colSpan={5} className="empty-table-cell">Még nincs aktív rendelés.</td></tr>
               )}
             </tbody>
           </table>
@@ -2059,26 +2474,30 @@ function PickupSettings() {
   }
 
   function exportReservationsXls() {
-    const sorted = [...reservations].sort((a, b) => new Date(a.pickup.startAt).getTime() - new Date(b.pickup.startAt).getTime());
+    const sorted = [...reservations].sort((a, b) => {
+      const aTime = a.pickup ? new Date(a.pickup.startAt).getTime() : Number.MAX_SAFE_INTEGER;
+      const bTime = b.pickup ? new Date(b.pickup.startAt).getTime() : Number.MAX_SAFE_INTEGER;
+      return aTime - bTime;
+    });
     downloadCsv(`tunde-divat-atvetelek-${new Date().toISOString().slice(0, 10)}.csv`, [
       ["Nap", "Felhasználó", "Sorszám", "Termék", "Méret", "Darab", "Ár Ft", "Átvétel helye", "Átvétel ideje", "Foglalás ideje"],
       ...sorted.map((reservation) => [
-        formatPickupDay(reservation.pickup.startAt),
+        formatPickupDay(reservation.pickup?.startAt),
         reservation.user?.username ?? "-",
         `#${reservation.product.displayNumber}`,
         productTitle(reservation.product),
         reservation.size,
         reservation.quantity,
         reservation.product.price,
-        reservation.pickup.address,
-        formatPickupRange(reservation.pickup),
+        pickupAddress(reservation.pickup),
+        pickupRangeText(reservation.pickup),
         formatDateTime(reservation.reservedAt)
       ])
     ]);
   }
 
   const reservationsByDay = Array.from(reservations.reduce((groups, reservation) => {
-    const key = pickupDayKey(reservation.pickup.startAt);
+    const key = pickupDayKey(reservation.pickup?.startAt);
     const current = groups.get(key) ?? [];
     current.push(reservation);
     groups.set(key, current);
@@ -2087,8 +2506,12 @@ function PickupSettings() {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([day, dayReservations]) => ({
       day,
-      label: formatPickupDay(dayReservations[0]?.pickup.startAt),
-      reservations: dayReservations.sort((a, b) => new Date(a.pickup.startAt).getTime() - new Date(b.pickup.startAt).getTime())
+      label: groupDayLabel(day, dayReservations[0]?.pickup?.startAt),
+      reservations: dayReservations.sort((a, b) => {
+        const aTime = a.pickup ? new Date(a.pickup.startAt).getTime() : Number.MAX_SAFE_INTEGER;
+        const bTime = b.pickup ? new Date(b.pickup.startAt).getTime() : Number.MAX_SAFE_INTEGER;
+        return aTime - bTime;
+      })
     }));
 
   return (
@@ -2158,8 +2581,8 @@ function PickupSettings() {
                         <td>{reservation.size}</td>
                         <td>{reservation.quantity} db</td>
                         <td>{formatHuf(reservation.product.price)}</td>
-                        <td>{reservation.pickup.address}</td>
-                        <td>{formatPickupRange(reservation.pickup)}</td>
+                        <td>{pickupAddress(reservation.pickup)}</td>
+                        <td>{pickupRangeText(reservation.pickup)}</td>
                         <td>{formatDateTime(reservation.reservedAt)}</td>
                       </tr>
                     ))}

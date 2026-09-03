@@ -7,6 +7,7 @@ const includeReservation = {
   pickup: true,
   user: { select: { id: true, username: true, email: true } }
 };
+const CANCELLATION_WINDOW_MS = 10 * 60 * 1000;
 
 export class ReservationService {
   async my(userId: number) {
@@ -31,7 +32,7 @@ export class ReservationService {
       include: { sizes: true, images: true }
     });
     if (!product) throw new AppError(404, "Product not found");
-    if (!product.images.some((image) => image.imageType === "FINAL")) {
+    if (!product.images.length) {
       throw new AppError(400, "Ez a termék még nem foglalható.");
     }
     if (product.reservableUntil && Date.now() > product.reservableUntil.getTime()) {
@@ -40,8 +41,8 @@ export class ReservationService {
     if (!product.sizes.some((size) => size.size === payload.size)) {
       throw new AppError(400, "Ez a méret nem foglalható ennél a terméknél.");
     }
-    const pickup = await prisma.pickupOption.findUnique({ where: { id: payload.pickup_id } });
-    if (!pickup || !pickup.isActive) throw new AppError(400, "Válassz érvényes személyes átvételi időpontot.");
+    const pickup = payload.pickup_id ? await prisma.pickupOption.findUnique({ where: { id: payload.pickup_id } }) : null;
+    if (payload.pickup_id && (!pickup || !pickup.isActive)) throw new AppError(400, "Válassz érvényes személyes átvételi időpontot.");
     const alreadyReserved = await prisma.reservation.findFirst({
       where: { productFk: product.id, userId, cancelledAt: null }
     });
@@ -53,7 +54,7 @@ export class ReservationService {
       data: {
         productFk: product.id,
         userId,
-        pickupFk: pickup.id,
+        pickupFk: pickup?.id ?? null,
         size: payload.size,
         quantity: payload.quantity ?? 1,
         canCancel: !hadCancelledBefore
@@ -66,6 +67,9 @@ export class ReservationService {
     const reservation = await prisma.reservation.findFirst({ where: { id, userId, cancelledAt: null } });
     if (!reservation) throw new AppError(404, "A foglalás nem található.");
     if (!reservation.canCancel) throw new AppError(400, "Ez a foglalás már nem mondható le.");
+    if (Date.now() > reservation.reservedAt.getTime() + CANCELLATION_WINDOW_MS) {
+      throw new AppError(400, "A foglalás csak a rögzítést követő 10 percben mondható le.");
+    }
     return prisma.reservation.update({
       where: { id },
       data: { cancelledAt: new Date() },

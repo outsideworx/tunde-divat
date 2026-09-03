@@ -49,7 +49,7 @@ export const pickupOptionPayloadSchema = z.object({
 export const reservationPayloadSchema = z.object({
   product_id: z.coerce.number().int().positive(),
   size: z.enum(allowedSizes),
-  pickup_id: z.coerce.number().int().positive(),
+  pickup_id: z.coerce.number().int().positive().optional().nullable(),
   quantity: z.coerce.number().int().positive().max(20).optional()
 });
 
@@ -70,11 +70,24 @@ export const registerSchema = loginSchema.extend({
   last_name: z.string().trim().min(1).max(80),
   first_name: z.string().trim().min(1).max(80),
   phone: z.string().trim().min(6).max(40).regex(/^[0-9+\-() /]+$/),
-  invite_code: z.string().trim().min(3).max(80)
+  invite_code: z.string().trim().min(3).max(80),
+  privacy_accepted: z.literal(true, {
+    errorMap: () => ({ message: "Az adatkezelési tájékoztató elfogadása kötelező." })
+  })
 });
 
 export const inviteCodePayloadSchema = z.object({
   invite_code: z.string().trim().min(3).max(80)
+});
+
+export const adminUserUpdateSchema = z.object({
+  username: z.string().trim().min(3).max(40).regex(/^[a-zA-Z0-9._-]+$/),
+  email: z.string().trim().email().max(160).optional().nullable().or(z.literal("")),
+  last_name: z.string().trim().max(80).optional().nullable(),
+  first_name: z.string().trim().max(80).optional().nullable(),
+  phone: z.string().trim().max(40).regex(/^[0-9+\-() /]*$/).optional().nullable(),
+  role: z.enum(userRoles),
+  is_active: z.boolean()
 });
 
 export type ProductPayload = z.infer<typeof productPayloadSchema>;
@@ -83,6 +96,7 @@ export type ReservationPayload = z.infer<typeof reservationPayloadSchema>;
 export type ReservationStatusPayload = z.infer<typeof reservationStatusPayloadSchema>;
 export type ReservationPickupPayload = z.infer<typeof reservationPickupPayloadSchema>;
 export type RegisterPayload = z.infer<typeof registerSchema>;
+export type AdminUserUpdatePayload = z.infer<typeof adminUserUpdateSchema>;
 export type ProductStatus = (typeof productStatuses)[number];
 export type GenerationStatus = (typeof generationStatuses)[number];
 export type ImageType = (typeof imageTypes)[number];

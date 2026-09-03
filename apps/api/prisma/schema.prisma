@@ -42,45 +42,48 @@ enum ReservationStatus {
 }
 
 model User {
-  id            Int       @id @default(autoincrement())
-  username      String    @unique
-  email         String?   @unique
-  lastName      String?   @map("last_name")
-  firstName     String?   @map("first_name")
-  phone         String?
-  passwordHash  String    @map("password_hash")
-  role          UserRole  @default(ADMIN)
-  products      Product[] @relation("ProductCreator")
-  reservations  Reservation[]
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  id                Int           @id @default(autoincrement())
+  username          String        @unique
+  email             String?       @unique
+  lastName          String?       @map("last_name")
+  firstName         String?       @map("first_name")
+  phone             String?
+  passwordHash      String        @map("password_hash")
+  privacyAcceptedAt DateTime?     @map("privacy_accepted_at")
+  role              UserRole      @default(ADMIN)
+  isActive          Boolean       @default(true) @map("is_active")
+  products          Product[]     @relation("ProductCreator")
+  reservations      Reservation[]
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
 
+  @@index([isActive])
   @@map("users")
 }
 
 model Product {
-  id             Int             @id @default(autoincrement())
-  productId      String          @map("product_id")
-  productName    String?         @map("product_name")
-  displayNumber  String          @map("display_number")
-  price          Int
-  category       String?
-  color          String?
-  brand          String?
-  description    String?
-  notes          String?
-  targetGroup    String?         @map("target_group")
-  reservableUntil DateTime?      @map("reservable_until")
-  reservableDurationHours Int?   @map("reservable_duration_hours")
-  status         ProductStatus   @default(DRAFT)
-  createdBy      Int?            @map("created_by")
-  creator        User?           @relation("ProductCreator", fields: [createdBy], references: [id], onDelete: SetNull)
-  sizes          ProductSize[]
-  images         ProductImage[]
-  generationJobs GenerationJob[]
-  reservations   Reservation[]
-  createdAt      DateTime        @default(now()) @map("created_at")
-  updatedAt      DateTime        @updatedAt @map("updated_at")
+  id                      Int             @id @default(autoincrement())
+  productId               String          @map("product_id")
+  productName             String?         @map("product_name")
+  displayNumber           String          @map("display_number")
+  price                   Int
+  category                String?
+  color                   String?
+  brand                   String?
+  description             String?
+  notes                   String?
+  targetGroup             String?         @map("target_group")
+  reservableUntil         DateTime?       @map("reservable_until")
+  reservableDurationHours Int?            @map("reservable_duration_hours")
+  status                  ProductStatus   @default(DRAFT)
+  createdBy               Int?            @map("created_by")
+  creator                 User?           @relation("ProductCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  sizes                   ProductSize[]
+  images                  ProductImage[]
+  generationJobs          GenerationJob[]
+  reservations            Reservation[]
+  createdAt               DateTime        @default(now()) @map("created_at")
+  updatedAt               DateTime        @updatedAt @map("updated_at")
 
   // MVP assumption: one supplier, so product_id is unique for now.
   // Add supplier/supplier_id later and replace this with supplier + product_id.
@@ -122,19 +125,19 @@ model PickupOption {
 }
 
 model Reservation {
-  id          Int          @id @default(autoincrement())
-  productFk   Int          @map("product_fk")
-  product     Product      @relation(fields: [productFk], references: [id], onDelete: Cascade)
-  userId      Int          @map("user_id")
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  pickupFk    Int          @map("pickup_fk")
-  pickup      PickupOption @relation(fields: [pickupFk], references: [id], onDelete: Restrict)
+  id          Int               @id @default(autoincrement())
+  productFk   Int               @map("product_fk")
+  product     Product           @relation(fields: [productFk], references: [id], onDelete: Cascade)
+  userId      Int               @map("user_id")
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pickupFk    Int?              @map("pickup_fk")
+  pickup      PickupOption?     @relation(fields: [pickupFk], references: [id], onDelete: SetNull)
   size        String
-  quantity    Int          @default(1)
+  quantity    Int               @default(1)
   status      ReservationStatus @default(PROCUREMENT_PENDING)
-  canCancel   Boolean      @default(true) @map("can_cancel")
-  reservedAt  DateTime     @default(now()) @map("reserved_at")
-  cancelledAt DateTime?    @map("cancelled_at")
+  canCancel   Boolean           @default(true) @map("can_cancel")
+  reservedAt  DateTime          @default(now()) @map("reserved_at")
+  cancelledAt DateTime?         @map("cancelled_at")
 
   @@index([productFk])
   @@index([userId, cancelledAt])

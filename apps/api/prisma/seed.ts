@@ -27,11 +27,15 @@ async function main() {
       where: { username: user.username },
       update: {
         passwordHash: await argon2.hash(user.password, { type: argon2.argon2id }),
-        role: user.role
+        role: user.role,
+        isActive: true,
+        privacyAcceptedAt: new Date()
       },
       create: {
         username: user.username,
         passwordHash: await argon2.hash(user.password, { type: argon2.argon2id }),
+        privacyAcceptedAt: new Date(),
+        isActive: true,
         role: user.role
       }
     });

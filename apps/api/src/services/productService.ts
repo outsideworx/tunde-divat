@@ -16,6 +16,7 @@ const includeProduct = {
 
 type ProductWithRelations = Prisma.ProductGetPayload<{ include: typeof includeProduct }>;
 const PUBLIC_DISPLAY_COUNTER = "PUBLIC_DISPLAY_NUMBER";
+const PRODUCT_ID_COUNTER = "PRODUCT_ID_NUMBER";
 
 export class ProductService {
   private storage = new StorageService();
@@ -44,9 +45,10 @@ export class ProductService {
   async create(payload: ProductPayload, userId: number) {
     try {
       return await prisma.$transaction(async (tx) => {
+        const productId = payload.product_id?.trim() || (await this.nextAvailableProductId(tx));
         const product = await tx.product.create({
           data: {
-            productId: payload.product_id,
+            productId,
             productName: payload.product_name,
             displayNumber: payload.display_number ?? "0",
             price: payload.price,
@@ -84,7 +86,7 @@ export class ProductService {
       return tx.product.update({
         where: { id },
         data: {
-          productId: payload.product_id ?? existing.productId,
+          productId: payload.product_id?.trim() || existing.productId,
           productName: payload.product_name === undefined ? existing.productName : payload.product_name,
           displayNumber: payload.display_number ?? existing.displayNumber,
           price: payload.price ?? existing.price,
@@ -249,6 +251,28 @@ export class ProductService {
         include: includeProduct
       });
     });
+  }
+
+  private async nextCounterValue(tx: Prisma.TransactionClient, name: string) {
+    const counter = await tx.appCounter.findUnique({ where: { name } });
+    if (!counter) {
+      await tx.appCounter.create({ data: { name, nextValue: 2 } });
+      return "1";
+    }
+    await tx.appCounter.update({
+      where: { name },
+      data: { nextValue: { increment: 1 } }
+    });
+    return String(counter.nextValue);
+  }
+
+  private async nextAvailableProductId(tx: Prisma.TransactionClient) {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const productId = await this.nextCounterValue(tx, PRODUCT_ID_COUNTER);
+      const existing = await tx.product.findUnique({ where: { productId } });
+      if (!existing) return productId;
+    }
+    throw new AppError(500, "Nem sikerült automatikus Product ID-t kiosztani.");
   }
 
   private async createFinalOverlay(id: number, sourceBuffer: Buffer) {

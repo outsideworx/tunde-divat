@@ -1,4 +1,4 @@
-import type { ReservationPayload, ReservationStatusPayload } from "@fashion-mvp/shared";
+import type { ReservationPayload, ReservationPickupPayload, ReservationStatusPayload } from "@fashion-mvp/shared";
 import { prisma } from "../db/prisma.js";
 import { AppError } from "../utils/errors.js";
 
@@ -69,6 +69,18 @@ export class ReservationService {
     return prisma.reservation.update({
       where: { id },
       data: { cancelledAt: new Date() },
+      include: includeReservation
+    });
+  }
+
+  async updatePickup(id: number, userId: number, payload: ReservationPickupPayload) {
+    const reservation = await prisma.reservation.findFirst({ where: { id, userId, cancelledAt: null } });
+    if (!reservation) throw new AppError(404, "A foglalás nem található.");
+    const pickup = await prisma.pickupOption.findUnique({ where: { id: payload.pickup_id } });
+    if (!pickup || !pickup.isActive) throw new AppError(400, "Válassz érvényes személyes átvételi időpontot.");
+    return prisma.reservation.update({
+      where: { id },
+      data: { pickupFk: pickup.id },
       include: includeReservation
     });
   }

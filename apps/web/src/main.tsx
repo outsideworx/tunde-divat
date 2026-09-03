@@ -143,6 +143,16 @@ function downloadFile(filename: string, content: string, type: string) {
   URL.revokeObjectURL(link.href);
 }
 
+function csvCell(value: string | number | null | undefined) {
+  const normalized = String(value ?? "").replaceAll('"', '""');
+  return `"${normalized}"`;
+}
+
+function downloadCsv(filename: string, rows: Array<Array<string | number | null | undefined>>) {
+  const csv = rows.map((row) => row.map(csvCell).join(";")).join("\n");
+  downloadFile(filename, `\uFEFF${csv}`, "text/csv;charset=utf-8");
+}
+
 function formatDateTime(value?: string | null) {
   if (!value) return "Nincs megadva";
   return new Intl.DateTimeFormat("hu-HU", {
@@ -163,8 +173,22 @@ function formatDateOnly(value?: string | null) {
   }).format(new Date(value));
 }
 
+function formatPickupDay(value?: string | null) {
+  if (!value) return "Nincs dátum";
+  return new Intl.DateTimeFormat("hu-HU", {
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date(value));
+}
+
+function pickupDayKey(value?: string | null) {
+  if (!value) return "unknown";
+  const date = new Date(value);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 function formatReservationDeadline(value?: string | null) {
-  return value ? formatDateTime(value) : "Lejárat nélkül";
+  return value ? formatDateTime(value) : "Határidő nélkül foglalható";
 }
 
 function formatPickupRange(pickup?: PickupOption) {
@@ -184,6 +208,14 @@ function productTitle(product: Product) {
   return `#${product.displayNumber} ${name}`;
 }
 
+function customerProductTitle(product: Product) {
+  return product.productName || product.category || product.description?.split(/[.\n]/)[0].trim().slice(0, 48) || "Termék";
+}
+
+function sortedProductSizes(product: Product) {
+  return [...product.sizes].sort((a, b) => allowedSizes.indexOf(a.size as (typeof allowedSizes)[number]) - allowedSizes.indexOf(b.size as (typeof allowedSizes)[number]));
+}
+
 function productIdFromPath() {
   const match = window.location.pathname.match(/^\/product\/(\d+)$/);
   return match ? Number(match[1]) : null;
@@ -195,22 +227,23 @@ function localDateAt(date: string, hour: number) {
 }
 
 function formatRemaining(value?: string | null) {
-  if (!value) return "Szabadon foglalható";
+  if (!value) return "Határidő nélkül foglalható";
   const diff = new Date(value).getTime() - Date.now();
   if (diff <= 0) return "Lejárt";
-  const hours = Math.floor(diff / (60 * 60 * 1000));
-  const minutes = Math.floor((diff % (60 * 60 * 1000)) / (60 * 1000));
-  if (hours >= 24) {
-    const days = Math.floor(hours / 24);
-    return `${days} nap ${hours % 24} óra`;
-  }
-  return `${hours} óra ${String(minutes).padStart(2, "0")} perc`;
+  const totalSeconds = Math.floor(diff / 1000);
+  const days = Math.floor(totalSeconds / 86_400);
+  const hours = Math.floor((totalSeconds % 86_400) / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  if (totalSeconds < 3_600) return `${pad(minutes)}:${pad(seconds)}`;
+  return `${pad(days)}:${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
 }
 
 function isDeadlineUrgent(value?: string | null) {
   if (!value) return false;
   const diff = new Date(value).getTime() - Date.now();
-  return diff > 0 && diff <= 4 * 60 * 60 * 1000;
+  return diff <= 2 * 60 * 60 * 1000;
 }
 
 function toLocalDateTimeInput(value?: string | null) {
@@ -302,7 +335,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
 
   return (
     <main className="auth-shell">
-      <span className="build-version">ver.: alpha 0.2</span>
+      <span className="build-version">ver.: alpha 0.3</span>
       <section className="brand-panel">
         <div />
         <div>
@@ -395,7 +428,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
   }, [user.id]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setTick((value) => value + 1), 60_000);
+    const timer = window.setInterval(() => setTick((value) => value + 1), 1_000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -413,7 +446,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
   const offerProducts = products.filter((product) => product.status === "APPROVED" && productDisplayImage(product));
   const categories = Array.from(new Set(offerProducts.map((product) => product.category).filter(Boolean) as string[]));
   const visible = offerProducts.filter((product) => {
-    const haystack = [product.displayNumber, product.productId, product.productName, product.category, product.description, product.sizes.map((s) => s.size).join(" ")]
+    const haystack = [product.productName, product.category, product.description, product.sizes.map((s) => s.size).join(" ")]
       .filter(Boolean)
       .join(" ")
       .toLowerCase();
@@ -475,8 +508,10 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
           </div>
         </div>
         <nav className="store-nav">
-          <button className={storeView === "catalog" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("catalog")}>Kínálat</button>
-          <button className={storeView === "reservations" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("reservations")}>Foglalásaim</button>
+          <button className={storeView === "catalog" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("catalog")}>Aktuális kínálat</button>
+          <button className={storeView === "reservations" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("reservations")}>
+            Foglalásaim{reservationTotals.count > 0 ? ` (${reservationTotals.count})` : ""}
+          </button>
           <button className={storeView === "favorites" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("favorites")}>Kedvencek</button>
           {onBackToAdmin && <button className="secondary" onClick={onBackToAdmin}>Vissza az adminhoz</button>}
           <button className="ghost" onClick={logout}>Kijelentkezés</button>
@@ -505,7 +540,16 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
         ) : storeView === "reservations" ? (
           <ReservationsPage
             reservations={reservations}
+            pickups={pickups}
             onBackToCatalog={() => setStoreView("catalog")}
+            onUpdatePickup={async (reservation, pickupId) => {
+              await api(`/api/reservations/${reservation.id}/pickup`, {
+                method: "PATCH",
+                body: JSON.stringify({ pickup_id: pickupId })
+              });
+              setMessage("Az átvételi időpont módosítva.");
+              await loadStoreData();
+            }}
             onCancel={async (reservation) => {
               const confirmed = window.confirm("Biztosan lemondod ezt a foglalást? Ha ugyanezt a terméket később újra lefoglalod, az új foglalást már nem fogod tudni lemondani.");
               if (!confirmed) return;
@@ -547,7 +591,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
               </div>
               <label className="search-field">
                 <Search size={18} />
-                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Keresés sorszám, név, leírás alapján" />
+                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Keresés név, leírás alapján" />
               </label>
               <select value={category} onChange={(e) => setCategory(e.target.value)}>
                 <option value="">Összes kategória</option>
@@ -570,7 +614,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
       <nav className="mobile-store-nav" aria-label="Vásárlói gyorsnavigáció">
         <button className={storeView === "catalog" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("catalog")}>
           <ShoppingBag size={20} />
-          <span>Kínálat</span>
+          <span>Aktuális kínálat</span>
         </button>
         <button className={storeView === "favorites" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("favorites")}>
           <Heart size={20} fill={storeView === "favorites" && !detailProductId ? "currentColor" : "none"} />
@@ -578,7 +622,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
         </button>
         <button className={storeView === "reservations" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("reservations")}>
           <FolderCheck size={20} />
-          <span>Foglalásaim</span>
+          <span>Foglalásaim{reservationTotals.count > 0 ? ` (${reservationTotals.count})` : ""}</span>
         </button>
         <button onClick={logout}>
           <LogOut size={20} />
@@ -612,12 +656,28 @@ function ProductGrid({ products, favoriteIds, onToggleFavorite, onOpenDetail, ti
   );
 }
 
-function ReservationsPage({ reservations, onBackToCatalog, onCancel }: { reservations: Reservation[]; onBackToCatalog: () => void; onCancel: (reservation: Reservation) => Promise<void> }) {
+function ReservationsPage({ reservations, pickups, onBackToCatalog, onUpdatePickup, onCancel }: {
+  reservations: Reservation[];
+  pickups: PickupOption[];
+  onBackToCatalog: () => void;
+  onUpdatePickup: (reservation: Reservation, pickupId: number) => Promise<void>;
+  onCancel: (reservation: Reservation) => Promise<void>;
+}) {
+  const [previewImage, setPreviewImage] = useState("");
+  const [busyReservationId, setBusyReservationId] = useState<number | null>(null);
   const totals = reservations.reduce((result, reservation) => {
     result.count += reservation.quantity;
     result.amount += reservation.quantity * reservation.product.price;
     return result;
   }, { count: 0, amount: 0 });
+  async function updatePickup(reservation: Reservation, pickupId: number) {
+    setBusyReservationId(reservation.id);
+    try {
+      await onUpdatePickup(reservation, pickupId);
+    } finally {
+      setBusyReservationId(null);
+    }
+  }
   return (
     <section className="panel reservations-panel">
       <div className="store-toolbar compact-toolbar">
@@ -625,7 +685,9 @@ function ReservationsPage({ reservations, onBackToCatalog, onCancel }: { reserva
           <h2>Foglalásaim</h2>
           <span>{totals.count} db | {formatHuf(totals.amount)}</span>
         </div>
-        <button className="secondary" onClick={onBackToCatalog}>Vissza a kínálathoz</button>
+        <button className="secondary icon-text back-to-catalog-button" onClick={onBackToCatalog}>
+          <ArrowLeft size={18} /> Vissza az aktuális kínálathoz
+        </button>
       </div>
       <section className="pickup-panel">
         <div className="store-toolbar compact-toolbar">
@@ -637,31 +699,53 @@ function ReservationsPage({ reservations, onBackToCatalog, onCancel }: { reserva
         <table>
           <thead>
             <tr>
-              <th>Termék</th>
+              <th>Terméknév</th>
+              <th>Kép</th>
               <th>Méret</th>
-              <th>Darabszám</th>
               <th>Fizetendő</th>
               <th>Átvétel helye</th>
               <th>Átvétel ideje</th>
-              <th>Művelet</th>
+              <th>Foglalás módosítása</th>
             </tr>
           </thead>
           <tbody>
-            {reservations.length ? reservations.map((reservation) => (
-              <tr key={reservation.id}>
-                <td>#{reservation.product.displayNumber}</td>
-                <td>{reservation.size}</td>
-                <td>{reservation.quantity}</td>
-                <td>{formatHuf(reservation.product.price * reservation.quantity)}</td>
-                <td>{reservation.pickup.address}</td>
-                <td>{formatPickupRange(reservation.pickup)}</td>
-                <td>
-                  <button className="ghost table-action-btn" disabled={!reservation.canCancel} onClick={() => onCancel(reservation)}>
-                    {reservation.canCancel ? "Foglalás lemondása" : "Nem lemondható"}
-                  </button>
-                </td>
-              </tr>
-            )) : (
+            {reservations.length ? reservations.map((reservation) => {
+              const image = productDisplayImage(reservation.product);
+              const url = imageUrl(image);
+              return (
+                <tr key={reservation.id}>
+                  <td>{customerProductTitle(reservation.product)}</td>
+                  <td>
+                    {image ? (
+                      <button className="image-preview-button" onClick={() => setPreviewImage(url)} aria-label="Termékkép nagyítása">
+                        <img className="table-thumb" src={url} alt={`Foglalás ${reservation.product.displayNumber}`} />
+                      </button>
+                    ) : "-"}
+                  </td>
+                  <td>{reservation.size}</td>
+                  <td>{formatHuf(reservation.product.price * reservation.quantity)}</td>
+                  <td>{reservation.pickup.address}</td>
+                  <td>{formatPickupRange(reservation.pickup)}</td>
+                  <td>
+                    <div className="reservation-edit-actions">
+                      <select
+                        className="status-select"
+                        value={reservation.pickupFk}
+                        disabled={busyReservationId === reservation.id || pickups.length === 0}
+                        onChange={(event) => updatePickup(reservation, Number(event.target.value))}
+                      >
+                        {pickups.map((pickup) => (
+                          <option value={pickup.id} key={pickup.id}>{pickup.address} | {formatPickupRange(pickup)}</option>
+                        ))}
+                      </select>
+                      <button className="ghost table-action-btn" disabled={!reservation.canCancel} onClick={() => onCancel(reservation)}>
+                        {reservation.canCancel ? "Foglalás lemondása" : "Nem lemondható"}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            }) : (
               <tr>
                 <td colSpan={7} className="empty-table-cell">Még nincs foglalásod.</td>
               </tr>
@@ -669,6 +753,11 @@ function ReservationsPage({ reservations, onBackToCatalog, onCancel }: { reserva
           </tbody>
         </table>
       </div>
+      {previewImage && (
+        <button className="image-lightbox" onClick={() => setPreviewImage("")} aria-label="Nagyított termékkép bezárása">
+          <img src={previewImage} alt="Nagyított termékkép" />
+        </button>
+      )}
     </section>
   );
 }
@@ -679,14 +768,14 @@ function StoreProductCard({ product, isFavorite, onToggleFavorite, onOpenDetail,
     <article className="store-card">
       <div className="store-image-wrap">
         <button className="store-image-button" onClick={onOpenDetail}>
-          <img src={imageUrl(displayImage)} alt={`#${product.displayNumber}`} />
+          <img src={imageUrl(displayImage)} alt={customerProductTitle(product)} />
         </button>
         <button className={`favorite-button ${isFavorite ? "active" : ""}`} onClick={onToggleFavorite} aria-label={isFavorite ? "Eltávolítás a kedvencekből" : "Kedvencekhez adás"}>
           <Heart size={20} fill={isFavorite ? "currentColor" : "none"} />
         </button>
       </div>
       <button className="store-card-summary" onClick={onOpenDetail}>
-        <span>{productTitle(product)}</span>
+        <span>{customerProductTitle(product)}</span>
         <strong>{formatHuf(product.price)}</strong>
         <small className="deadline-countdown">
           Foglalható eddig: <b className={isDeadlineUrgent(product.reservableUntil) ? "urgent" : ""}>{tick >= 0 ? formatRemaining(product.reservableUntil) : ""}</b>
@@ -707,7 +796,8 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
   onReserved: () => Promise<void>;
 }) {
   const displayImage = productDisplayImage(product);
-  const [size, setSize] = useState(product.sizes[0]?.size ?? "");
+  const sizes = sortedProductSizes(product);
+  const [size, setSize] = useState(sizes[0]?.size ?? "");
   const [quantity, setQuantity] = useState(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -716,7 +806,7 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
   const deadlineExpired = product.reservableUntil ? Date.now() > new Date(product.reservableUntil).getTime() : false;
 
   useEffect(() => {
-    const timer = window.setInterval(() => setTick((value) => value + 1), 60_000);
+    const timer = window.setInterval(() => setTick((value) => value + 1), 1_000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -726,7 +816,7 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
     const selectedPickup = earliestPickup ?? pickups[0];
     if (!selectedPickup) return setError("Nincs megadva személyes átvételi időpont.");
     const confirmed = window.confirm(
-      `Kérjük, csak akkor erősítsd meg a foglalást, ha biztosan át tudod venni a terméket a választott időpontban.\n\nTermék: #${product.displayNumber}\nMéret: ${size}\nDarabszám: ${quantity} db\nÁtvétel: ${selectedPickup ? `${selectedPickup.address}, ${formatPickupRange(selectedPickup)}` : ""}\n\nMegerősíted a foglalást?`
+      `Kérjük, csak akkor erősítsd meg a foglalást, ha biztosan át tudod venni a terméket a választott időpontban.\n\nTermék: ${customerProductTitle(product)}\nMéret: ${size}\nDarabszám: ${quantity} db\nÁtvétel: ${selectedPickup ? `${selectedPickup.address}, ${formatPickupRange(selectedPickup)}` : ""}\n\nMegerősíted a foglalást?`
     );
     if (!confirmed) return;
     setBusy(true);
@@ -750,10 +840,10 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
       </button>
       <section className="product-detail">
         <div className="product-detail-image">
-          <img src={imageUrl(displayImage)} alt={`#${product.displayNumber}`} />
+          <img src={imageUrl(displayImage)} alt={customerProductTitle(product)} />
         </div>
         <div className="product-detail-info">
-          <h2>{productTitle(product)}</h2>
+          <h2>{customerProductTitle(product)}</h2>
           <strong className="detail-price">{formatHuf(product.price)}</strong>
           <div className="quantity-row">
             <button onClick={() => setQuantity((value) => Math.max(1, value - 1))}>-</button>
@@ -768,7 +858,7 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
             <label>
               Méret
               <select value={size} onChange={(event) => setSize(event.target.value)}>
-                {product.sizes.map((item) => <option value={item.size} key={item.size}>{item.size}</option>)}
+                {sizes.map((item) => <option value={item.size} key={item.size}>{item.size}</option>)}
               </select>
             </label>
           </div>
@@ -778,13 +868,13 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
             <ShoppingBag size={18} /> {deadlineExpired ? "A foglalási határidő lejárt" : activeReservation ? "Már lefoglalva" : "Lefoglalom személyes átvételre"}
           </button>
           <div className="detail-facts">
-            <div><span>Elérhető Méretek:</span><strong>{product.sizes.map((s) => s.size).join(", ")}</strong></div>
-            <div><span>Foglalható eddig:</span><strong>{tick >= 0 ? formatRemaining(product.reservableUntil) : ""}</strong></div>
-            <div><span>Várható szállítás:</span><strong>{formatDateOnly(earliestPickup?.startAt)}</strong></div>
+            <div><span>Elérhető Méretek:</span><strong className="detail-fact-value">{sizes.map((s) => s.size).join(", ")}</strong></div>
+            <div><span>Foglalható eddig:</span><strong className={isDeadlineUrgent(product.reservableUntil) ? "urgent" : ""}>{tick >= 0 ? formatRemaining(product.reservableUntil) : ""}</strong></div>
+            <div><span>Várható szállítás:</span><strong className="detail-fact-value">{formatDateOnly(earliestPickup?.startAt)}</strong></div>
           </div>
           <button className={`wishlist-row ${isFavorite ? "active" : ""}`} onClick={onToggleFavorite}>
             <Heart size={24} fill={isFavorite ? "currentColor" : "none"} />
-            {isFavorite ? "Kívánságlistán" : "Kívánságlistára teszem"}
+            {isFavorite ? "Hozzáadtad a kívánságlistához." : "Kívánságlistára teszem"}
           </button>
         </div>
       </section>
@@ -1022,6 +1112,7 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
         method: "POST",
         body: JSON.stringify({
           ...form,
+          product_id: form.product_id || null,
           product_name: form.product_name || null,
           price: Number(form.price),
           category: form.category || null,
@@ -1145,7 +1236,7 @@ function ReservationDeadlinePicker({ durationHours, customDate, noExpiry, onDura
       <p>A gyorsgombos határidő a honlapra megosztás pillanatától indul.</p>
       <label className="checkbox-line">
         <input type="checkbox" checked={noExpiry} onChange={(event) => onNoExpiry(event.target.checked)} />
-        Lejárat nélkül
+        Határidő nélkül foglalható
       </label>
       <div className="deadline-buttons">
         {options.map((hours) => (
@@ -1541,7 +1632,7 @@ function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () =
           checked={form.no_expiry}
           onChange={(event) => setForm({ ...form, no_expiry: event.target.checked, reservable_until: event.target.checked ? "" : form.reservable_until })}
         />
-        Lejárat nélkül
+        Határidő nélkül foglalható
       </label>
       <Text label="Foglalható eddig" type="datetime-local" value={form.reservable_until} onChange={(reservable_until) => setForm({ ...form, reservable_until, no_expiry: false })} />
       <label className="wide">
@@ -1835,45 +1926,21 @@ function Orders() {
   }
 
   function exportOrdersXls() {
-    const rows = reservations.map((reservation) => `
-      <tr>
-        <td>#${reservation.product.displayNumber}</td>
-        <td>${reservation.product.productName ?? ""}</td>
-        <td>${reservation.user?.username ?? "-"}</td>
-        <td>${reservation.size}</td>
-        <td>${reservation.quantity}</td>
-        <td>${reservation.product.price}</td>
-        <td>${reservationStatusLabels[reservation.status]}</td>
-        <td>${reservation.pickup.address}</td>
-        <td>${formatPickupRange(reservation.pickup)}</td>
-        <td>${formatDateTime(reservation.reservedAt)}</td>
-      </tr>
-    `).join("");
-    const html = `
-      <html>
-        <head><meta charset="UTF-8" /></head>
-        <body>
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Termék</th>
-                <th>Felhasználó</th>
-                <th>Méret</th>
-                <th>Darab</th>
-                <th>Ár Ft</th>
-                <th>Státusz</th>
-                <th>Átvétel helye</th>
-                <th>Átvétel ideje</th>
-                <th>Foglalás ideje</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </body>
-      </html>
-    `;
-    downloadFile(`tunde-divat-rendelok-rendelesek-${new Date().toISOString().slice(0, 10)}.xls`, html, "application/vnd.ms-excel;charset=utf-8");
+    downloadCsv(`tunde-divat-rendelok-rendelesek-${new Date().toISOString().slice(0, 10)}.csv`, [
+      ["Sorszám", "Termék", "Felhasználó", "Méret", "Darab", "Ár Ft", "Státusz", "Átvétel helye", "Átvétel ideje", "Foglalás ideje"],
+      ...reservations.map((reservation) => [
+        `#${reservation.product.displayNumber}`,
+        productTitle(reservation.product),
+        reservation.user?.username ?? "-",
+        reservation.size,
+        reservation.quantity,
+        reservation.product.price,
+        reservationStatusLabels[reservation.status],
+        reservation.pickup.address,
+        formatPickupRange(reservation.pickup),
+        formatDateTime(reservation.reservedAt)
+      ])
+    ]);
   }
 
   const sortedReservations = [...reservations].sort((a, b) => {
@@ -1886,7 +1953,7 @@ function Orders() {
     <>
       <header className="topbar">
         <h1>Rendelők és rendelések</h1>
-        <button className="secondary icon-text" onClick={exportOrdersXls}><Download size={18} /> XLS mentés</button>
+        <button className="secondary icon-text" onClick={exportOrdersXls}><Download size={18} /> Táblázat mentése</button>
       </header>
       {error && <p className="error">{error}</p>}
       {message && <p className="success">{message}</p>}
@@ -1992,44 +2059,37 @@ function PickupSettings() {
   }
 
   function exportReservationsXls() {
-    const rows = reservations.map((reservation) => `
-      <tr>
-        <td>${reservation.user?.username ?? "-"}</td>
-        <td>#${reservation.product.displayNumber}</td>
-        <td>${reservation.product.productId}</td>
-        <td>${reservation.size}</td>
-        <td>${reservation.quantity}</td>
-        <td>${reservation.product.price}</td>
-        <td>${reservation.pickup.address}</td>
-        <td>${formatPickupRange(reservation.pickup)}</td>
-        <td>${formatDateTime(reservation.reservedAt)}</td>
-      </tr>
-    `).join("");
-    const html = `
-      <html>
-        <head><meta charset="UTF-8" /></head>
-        <body>
-          <table>
-            <thead>
-              <tr>
-                <th>Felhasználó</th>
-                <th>#</th>
-                <th>Product ID</th>
-                <th>Méret</th>
-                <th>Darab</th>
-                <th>Ár Ft</th>
-                <th>Átvétel helye</th>
-                <th>Átvétel ideje</th>
-                <th>Foglalás ideje</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </body>
-      </html>
-    `;
-    downloadFile(`tunde-divat-rendelesek-${new Date().toISOString().slice(0, 10)}.xls`, html, "application/vnd.ms-excel;charset=utf-8");
+    const sorted = [...reservations].sort((a, b) => new Date(a.pickup.startAt).getTime() - new Date(b.pickup.startAt).getTime());
+    downloadCsv(`tunde-divat-atvetelek-${new Date().toISOString().slice(0, 10)}.csv`, [
+      ["Nap", "Felhasználó", "Sorszám", "Termék", "Méret", "Darab", "Ár Ft", "Átvétel helye", "Átvétel ideje", "Foglalás ideje"],
+      ...sorted.map((reservation) => [
+        formatPickupDay(reservation.pickup.startAt),
+        reservation.user?.username ?? "-",
+        `#${reservation.product.displayNumber}`,
+        productTitle(reservation.product),
+        reservation.size,
+        reservation.quantity,
+        reservation.product.price,
+        reservation.pickup.address,
+        formatPickupRange(reservation.pickup),
+        formatDateTime(reservation.reservedAt)
+      ])
+    ]);
   }
+
+  const reservationsByDay = Array.from(reservations.reduce((groups, reservation) => {
+    const key = pickupDayKey(reservation.pickup.startAt);
+    const current = groups.get(key) ?? [];
+    current.push(reservation);
+    groups.set(key, current);
+    return groups;
+  }, new Map<string, Reservation[]>()).entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([day, dayReservations]) => ({
+      day,
+      label: formatPickupDay(dayReservations[0]?.pickup.startAt),
+      reservations: dayReservations.sort((a, b) => new Date(a.pickup.startAt).getTime() - new Date(b.pickup.startAt).getTime())
+    }));
 
   return (
     <>
@@ -2070,37 +2130,46 @@ function PickupSettings() {
             <h2>Foglalások és érkezések</h2>
             <span>{reservations.length} aktív foglalás</span>
           </div>
-          <button className="secondary icon-text" onClick={exportReservationsXls}><Download size={18} /> XLS mentés</button>
+          <button className="secondary icon-text" onClick={exportReservationsXls}><Download size={18} /> Táblázat mentése</button>
         </div>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Felhasználó</th>
-                <th>Termék</th>
-                <th>Méret</th>
-                <th>Ár</th>
-                <th>Átvétel helye</th>
-                <th>Átvétel ideje</th>
-                <th>Foglalás ideje</th>
-              </tr>
-            </thead>
-            <tbody>
-              {reservations.length ? reservations.map((reservation) => (
-                <tr key={reservation.id}>
-                  <td>{reservation.user?.username ?? "-"}</td>
-                  <td>#{reservation.product.displayNumber}</td>
-                  <td>{reservation.size}</td>
-                  <td>{formatHuf(reservation.product.price)}</td>
-                  <td>{reservation.pickup.address}</td>
-                  <td>{formatPickupRange(reservation.pickup)}</td>
-                  <td>{formatDateTime(reservation.reservedAt)}</td>
-                </tr>
-              )) : (
-                <tr><td colSpan={7} className="empty-table-cell">Még nincs aktív foglalás.</td></tr>
-              )}
-            </tbody>
-          </table>
+        <div className="pickup-day-groups">
+          {reservationsByDay.length ? reservationsByDay.map((group) => (
+            <section className="pickup-day-box" key={group.day}>
+              <h3>{group.label}</h3>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Felhasználó</th>
+                      <th>Termék</th>
+                      <th>Méret</th>
+                      <th>Darab</th>
+                      <th>Ár</th>
+                      <th>Átvétel helye</th>
+                      <th>Átvétel ideje</th>
+                      <th>Foglalás ideje</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {group.reservations.map((reservation) => (
+                      <tr key={reservation.id}>
+                        <td>{reservation.user?.username ?? "-"}</td>
+                        <td>{productTitle(reservation.product)}</td>
+                        <td>{reservation.size}</td>
+                        <td>{reservation.quantity} db</td>
+                        <td>{formatHuf(reservation.product.price)}</td>
+                        <td>{reservation.pickup.address}</td>
+                        <td>{formatPickupRange(reservation.pickup)}</td>
+                        <td>{formatDateTime(reservation.reservedAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )) : (
+            <div className="empty-state">Még nincs aktív foglalás.</div>
+          )}
         </div>
       </section>
     </>

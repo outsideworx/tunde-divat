@@ -7,7 +7,7 @@ CREATE TABLE "users" (
     "first_name" TEXT,
     "phone" TEXT,
     "password_hash" TEXT NOT NULL,
-    "role" TEXT NOT NULL DEFAULT 'ADMIN',
+    "role" TEXT NOT NULL DEFAULT 'STAFF',
     "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" DATETIME NOT NULL
 );

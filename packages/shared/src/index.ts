@@ -108,6 +108,106 @@ export type ImageType = (typeof imageTypes)[number];
 export type UserRole = (typeof userRoles)[number];
 export type ReservationStatus = (typeof reservationStatuses)[number];
 
+// DTO types — response shapes returned by the API
+
+export type ProductImageDto = {
+  id: number;
+  productFk: number;
+  imageType: ImageType;
+  storagePath: string;
+  mimeType: string;
+  width: number | null;
+  height: number | null;
+  createdAt: string;
+};
+
+export type ProductSizeDto = {
+  id: number;
+  productFk: number;
+  size: string;
+  quantity: number | null;
+};
+
+export type GenerationJobDto = {
+  id: number;
+  productFk: number;
+  status: GenerationStatus;
+  provider: string;
+  errorMessage: string | null;
+  createdAt: string;
+  completedAt: string | null;
+};
+
+export type ProductDto = {
+  id: number;
+  productId: string;
+  productName: string | null;
+  displayNumber: string;
+  price: number;
+  category: string | null;
+  color: string | null;
+  brand: string | null;
+  description: string | null;
+  notes: string | null;
+  targetGroup: string | null;
+  reservableUntil: string | null;
+  reservableDurationHours: number | null;
+  status: ProductStatus;
+  createdBy: number | null;
+  createdAt: string;
+  updatedAt: string;
+  sizes: ProductSizeDto[];
+  images: ProductImageDto[];
+  generationJobs: GenerationJobDto[];
+};
+
+export type PickupOptionDto = {
+  id: number;
+  address: string;
+  startAt: string;
+  endAt: string;
+  isActive: boolean;
+  createdBy: number | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UserDto = {
+  id: number;
+  username: string;
+  email: string | null;
+  role: UserRole;
+};
+
+export type RegisteredUserDto = {
+  id: number;
+  username: string;
+  email: string | null;
+  lastName: string | null;
+  firstName: string | null;
+  phone: string | null;
+  role: UserRole;
+  isActive: boolean;
+  privacyAcceptedAt: string | null;
+  createdAt: string;
+};
+
+export type ReservationDto = {
+  id: number;
+  productFk: number;
+  userId: number;
+  pickupFk: number | null;
+  size: string;
+  quantity: number;
+  status: ReservationStatus;
+  canCancel: boolean;
+  reservedAt: string;
+  cancelledAt: string | null;
+  product: ProductDto;
+  pickup: PickupOptionDto;
+  user: UserDto | null;
+};
+
 export function formatHuf(price: number): string {
   return new Intl.NumberFormat("hu-HU", {
     maximumFractionDigits: 0

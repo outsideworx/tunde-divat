@@ -50,7 +50,7 @@ model User {
   phone             String?
   passwordHash      String        @map("password_hash")
   privacyAcceptedAt DateTime?     @map("privacy_accepted_at")
-  role              UserRole      @default(ADMIN)
+  role              UserRole      @default(STAFF)
   isActive          Boolean       @default(true) @map("is_active")
   products          Product[]     @relation("ProductCreator")
   reservations      Reservation[]

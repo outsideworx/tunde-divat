@@ -1,9 +1,8 @@
 import { Router } from "express";
 import multer from "multer";
-import { z } from "zod";
-import { productPayloadSchema } from "@fashion-mvp/shared";
+import { generationPayloadSchema, productPayloadSchema } from "@fashion-mvp/shared";
 import { env } from "../config/env.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAdmin, requireAuth } from "../middleware/auth.js";
 import { generationLimiter, uploadLimiter } from "../middleware/rateLimiters.js";
 import { asyncHandler } from "../utils/errors.js";
 import { ProductService } from "../services/productService.js";
@@ -16,9 +15,6 @@ const upload = multer({
 
 export const productRoutes = Router();
 const products = new ProductService();
-const generationPayloadSchema = z.object({
-  gender: z.enum(["female", "male"]).default("female")
-});
 
 productRoutes.use(requireAuth);
 
@@ -61,6 +57,7 @@ productRoutes.put(
 
 productRoutes.delete(
   "/:id",
+  requireAdmin,
   asyncHandler(async (req, res) => {
     res.json(await products.delete(Number(req.params.id)));
   })
@@ -86,15 +83,6 @@ productRoutes.post(
 );
 
 productRoutes.post(
-  "/:id/regenerate",
-  generationLimiter,
-  asyncHandler(async (req, res) => {
-    const payload = generationPayloadSchema.parse(req.body ?? {});
-    res.json({ product: await products.generate(Number(req.params.id), payload.gender) });
-  })
-);
-
-productRoutes.post(
   "/:id/overlay",
   asyncHandler(async (req, res) => {
     res.json({ product: await products.regenerateOverlay(Number(req.params.id)) });
@@ -103,6 +91,7 @@ productRoutes.post(
 
 productRoutes.post(
   "/:id/approve",
+  requireAdmin,
   asyncHandler(async (req, res) => {
     res.json({ product: await products.approve(Number(req.params.id)) });
   })
@@ -110,6 +99,7 @@ productRoutes.post(
 
 productRoutes.post(
   "/:id/publish",
+  requireAdmin,
   asyncHandler(async (req, res) => {
     res.json({ product: await products.publish(Number(req.params.id)) });
   })
@@ -117,6 +107,7 @@ productRoutes.post(
 
 productRoutes.post(
   "/:id/archive",
+  requireAdmin,
   asyncHandler(async (req, res) => {
     res.json({ product: await products.archive(Number(req.params.id)) });
   })
@@ -124,6 +115,7 @@ productRoutes.post(
 
 productRoutes.post(
   "/:id/restore",
+  requireAdmin,
   asyncHandler(async (req, res) => {
     res.json({ product: await products.restore(Number(req.params.id)) });
   })

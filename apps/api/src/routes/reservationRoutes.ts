@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { reservationPayloadSchema, reservationPickupPayloadSchema, reservationStatusPayloadSchema } from "@fashion-mvp/shared";
-import { requireAuth } from "../middleware/auth.js";
-import { asyncHandler, AppError } from "../utils/errors.js";
+import { requireAdmin, requireAuth } from "../middleware/auth.js";
+import { asyncHandler } from "../utils/errors.js";
 import { ReservationService } from "../services/reservationService.js";
 
 export const reservationRoutes = Router();
@@ -18,8 +18,8 @@ reservationRoutes.get(
 
 reservationRoutes.get(
   "/",
-  asyncHandler(async (req, res) => {
-    if (req.user!.role !== "ADMIN") throw new AppError(403, "Admin jogosultság szükséges.");
+  requireAdmin,
+  asyncHandler(async (_req, res) => {
     res.json({ reservations: await reservations.all() });
   })
 );
@@ -42,8 +42,8 @@ reservationRoutes.patch(
 
 reservationRoutes.patch(
   "/:id/status",
+  requireAdmin,
   asyncHandler(async (req, res) => {
-    if (req.user!.role !== "ADMIN") throw new AppError(403, "Admin jogosultság szükséges.");
     const payload = reservationStatusPayloadSchema.parse(req.body);
     res.json({ reservation: await reservations.updateStatus(Number(req.params.id), payload) });
   })

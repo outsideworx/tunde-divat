@@ -15,7 +15,7 @@ declare global {
 }
 
 export function signSession(user: AuthUser) {
-  return jwt.sign(user, env.SESSION_SECRET, { expiresIn: "12h", subject: String(user.id) });
+  return jwt.sign(user, env.SESSION_SECRET, { algorithm: "HS256", expiresIn: "12h", subject: String(user.id) });
 }
 
 export function setSessionCookie(res: Response, token: string) {
@@ -39,10 +39,17 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction) {
     return next(new AppError(401, "Authentication required"));
   }
   try {
-    req.user = jwt.verify(token, env.SESSION_SECRET) as AuthUser;
+    req.user = jwt.verify(token, env.SESSION_SECRET, { algorithms: ["HS256"] }) as AuthUser;
     return next();
   } catch {
     securityLog("unauthorized_access", { path: req.path, reason: "invalid_session" });
     return next(new AppError(401, "Authentication required"));
   }
+}
+
+export function requireAdmin(req: Request, _res: Response, next: NextFunction) {
+  if (req.user!.role !== "ADMIN") {
+    return next(new AppError(403, "Admin jogosultság szükséges."));
+  }
+  return next();
 }

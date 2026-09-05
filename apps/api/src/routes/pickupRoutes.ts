@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { pickupOptionPayloadSchema } from "@fashion-mvp/shared";
-import { requireAuth } from "../middleware/auth.js";
-import { asyncHandler, AppError } from "../utils/errors.js";
+import { requireAdmin, requireAuth } from "../middleware/auth.js";
+import { asyncHandler } from "../utils/errors.js";
 import { PickupService } from "../services/pickupService.js";
 
 export const pickupRoutes = Router();
@@ -18,8 +18,8 @@ pickupRoutes.get(
 
 pickupRoutes.post(
   "/",
+  requireAdmin,
   asyncHandler(async (req, res) => {
-    if (req.user!.role !== "ADMIN") throw new AppError(403, "Admin jogosultság szükséges.");
     const payload = pickupOptionPayloadSchema.parse(req.body);
     res.status(201).json({ option: await pickups.create(payload, req.user!.id) });
   })
@@ -27,8 +27,8 @@ pickupRoutes.post(
 
 pickupRoutes.delete(
   "/:id",
+  requireAdmin,
   asyncHandler(async (req, res) => {
-    if (req.user!.role !== "ADMIN") throw new AppError(403, "Admin jogosultság szükséges.");
     res.json({ option: await pickups.archive(Number(req.params.id)) });
   })
 );

@@ -19,9 +19,19 @@ const PUBLIC_DISPLAY_COUNTER = "PUBLIC_DISPLAY_NUMBER";
 const PRODUCT_ID_COUNTER = "PRODUCT_ID_NUMBER";
 
 export class ProductService {
-  private storage = new StorageService();
-  private ai = new ImageGenerationService(env.AI_PROVIDER);
-  private overlay = new ImageOverlayService();
+  private storage: StorageService;
+  private ai: ImageGenerationService;
+  private overlay: ImageOverlayService;
+
+  constructor(
+    storage = new StorageService(),
+    ai = new ImageGenerationService(env.AI_PROVIDER),
+    overlay = new ImageOverlayService()
+  ) {
+    this.storage = storage;
+    this.ai = ai;
+    this.overlay = overlay;
+  }
 
   async dashboardCounts() {
     const groups = await prisma.product.groupBy({ by: ["status"], _count: { _all: true } });

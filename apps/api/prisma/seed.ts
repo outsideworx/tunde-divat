@@ -9,16 +9,19 @@ config();
 const prisma = new PrismaClient();
 
 async function main() {
+  const adminUsername = process.env.SEED_ADMIN_USERNAME;
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD;
+  const inviteCode = process.env.SEED_INVITE_CODE;
+
+  if (!adminUsername) throw new Error("SEED_ADMIN_USERNAME is required");
+  if (!adminPassword) throw new Error("SEED_ADMIN_PASSWORD is required");
+  if (!inviteCode) throw new Error("SEED_INVITE_CODE is required");
+
   const users = [
     {
-      username: process.env.SEED_ADMIN_USERNAME ?? "admin123",
-      password: process.env.SEED_ADMIN_PASSWORD ?? "admin1234",
+      username: adminUsername,
+      password: adminPassword,
       role: "ADMIN" as const
-    },
-    {
-      username: process.env.SEED_DUMMY_USERNAME ?? "user123",
-      password: process.env.SEED_DUMMY_PASSWORD ?? "user1234",
-      role: "STAFF" as const
     }
   ];
 
@@ -44,8 +47,8 @@ async function main() {
 
   await prisma.appSetting.upsert({
     where: { key: "REGISTRATION_INVITE_CODE" },
-    update: {},
-    create: { key: "REGISTRATION_INVITE_CODE", value: "tunde2026" }
+    update: { value: inviteCode },
+    create: { key: "REGISTRATION_INVITE_CODE", value: inviteCode }
   });
   console.log("Registration invite code ready.");
 }

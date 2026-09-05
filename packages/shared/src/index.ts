@@ -77,7 +77,11 @@ export const registerSchema = loginSchema.extend({
 });
 
 export const inviteCodePayloadSchema = z.object({
-  invite_code: z.string().trim().min(3).max(80)
+  invite_code: z.string().trim().min(8).max(80)
+});
+
+export const generationPayloadSchema = z.object({
+  gender: z.enum(["female", "male"]).default("female")
 });
 
 export const adminUserUpdateSchema = z.object({
@@ -92,6 +96,7 @@ export const adminUserUpdateSchema = z.object({
 
 export type ProductPayload = z.infer<typeof productPayloadSchema>;
 export type PickupOptionPayload = z.infer<typeof pickupOptionPayloadSchema>;
+export type GenerationPayload = z.infer<typeof generationPayloadSchema>;
 export type ReservationPayload = z.infer<typeof reservationPayloadSchema>;
 export type ReservationStatusPayload = z.infer<typeof reservationStatusPayloadSchema>;
 export type ReservationPickupPayload = z.infer<typeof reservationPickupPayloadSchema>;

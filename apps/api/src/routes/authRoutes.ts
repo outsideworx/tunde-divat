@@ -1,10 +1,9 @@
 import argon2 from "argon2";
 import { Router } from "express";
-import type { Request } from "express";
 import { adminUserUpdateSchema, inviteCodePayloadSchema, loginSchema, registerSchema } from "@fashion-mvp/shared";
 import { prisma } from "../db/prisma.js";
 import { asyncHandler, AppError } from "../utils/errors.js";
-import { clearSessionCookie, requireAuth, setSessionCookie, signSession } from "../middleware/auth.js";
+import { clearSessionCookie, requireAdmin, requireAuth, setSessionCookie, signSession } from "../middleware/auth.js";
 import { loginLimiter } from "../middleware/rateLimiters.js";
 import { securityLog } from "../utils/securityLog.js";
 
@@ -13,10 +12,6 @@ const INVITE_CODE_KEY = "REGISTRATION_INVITE_CODE";
 
 function authUserFrom(user: { id: number; username: string; email: string | null; role: "ADMIN" | "STAFF" }) {
   return { id: user.id, username: user.username, email: user.email, role: user.role };
-}
-
-function requireAdmin(req: Request) {
-  if (req.user!.role !== "ADMIN") throw new AppError(403, "Admin jogosultság szükséges.");
 }
 
 authRoutes.post(
@@ -67,8 +62,8 @@ authRoutes.post(
 authRoutes.get(
   "/invite-code",
   requireAuth,
-  asyncHandler(async (req, res) => {
-    requireAdmin(req);
+  requireAdmin,
+  asyncHandler(async (_req, res) => {
     const setting = await prisma.appSetting.findUnique({ where: { key: INVITE_CODE_KEY } });
     res.json({ invite_code: setting?.value ?? "" });
   })
@@ -77,8 +72,8 @@ authRoutes.get(
 authRoutes.get(
   "/users",
   requireAuth,
-  asyncHandler(async (req, res) => {
-    requireAdmin(req);
+  requireAdmin,
+  asyncHandler(async (_req, res) => {
     const users = await prisma.user.findMany({
       select: {
         id: true,
@@ -101,8 +96,8 @@ authRoutes.get(
 authRoutes.put(
   "/users/:id",
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
-    requireAdmin(req);
     const id = Number(req.params.id);
     const payload = adminUserUpdateSchema.parse(req.body);
     if (id === req.user!.id && (!payload.is_active || payload.role !== "ADMIN")) {
@@ -156,8 +151,8 @@ authRoutes.put(
 authRoutes.post(
   "/users/:id/anonymize",
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
-    requireAdmin(req);
     const id = Number(req.params.id);
     if (id === req.user!.id) throw new AppError(400, "A saját felhasználódat nem anonimizálhatod.");
     const user = await prisma.user.update({
@@ -190,8 +185,8 @@ authRoutes.post(
 authRoutes.put(
   "/invite-code",
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
-    requireAdmin(req);
     const payload = inviteCodePayloadSchema.parse(req.body);
     const setting = await prisma.appSetting.upsert({
       where: { key: INVITE_CODE_KEY },

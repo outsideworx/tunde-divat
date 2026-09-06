@@ -1,13 +1,27 @@
 import { Fragment, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowLeft, Ban, Camera, Download, Eye, FolderCheck, Heart, KeyRound, LogOut, Menu, PanelLeftClose, Plus, RefreshCcw, Search, Share2, ShoppingBag, Sparkles, Trash2, Upload, Users } from "lucide-react";
+import { ArrowLeft, Ban, Camera, ChevronLeft, ChevronRight, Download, Eye, FolderCheck, Heart, KeyRound, LogOut, Menu, PanelLeftClose, Plus, RefreshCcw, Search, Share2, ShoppingBag, Sparkles, Trash2, Upload, Users } from "lucide-react";
 import { allowedSizes, formatHuf, type ReservationStatus } from "@fashion-mvp/shared";
 import "./styles.css";
 import { useEffect, useMemo, useState } from "react";
 
-const API =
-  import.meta.env.VITE_API_URL ??
-  `${window.location.protocol}//${window.location.hostname}:4000`;
+function getApiBase() {
+  const configured = import.meta.env.VITE_API_URL as string | undefined;
+  if (!configured) return "";
+  try {
+    const url = new URL(configured);
+    const isLocalApi = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+    const isRemoteBrowser = window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1";
+    if (isLocalApi && isRemoteBrowser) {
+      return "";
+    }
+    return url.origin;
+  } catch {
+    return configured;
+  }
+}
+
+const API = getApiBase();
 
 type ProductImage = { id: number; imageType: "ORIGINAL" | "AI_GENERATED" | "FINAL"; width?: number; height?: number };
 type Product = {
@@ -23,7 +37,7 @@ type Product = {
   description?: string;
   reservableUntil?: string | null;
   reservableDurationHours?: number | null;
-  sizes: { size: string; quantity?: number }[];
+  sizes: { size: string; quantity?: number | null }[];
   images: ProductImage[];
   createdAt: string;
 };
@@ -433,7 +447,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
 
   return (
     <main className="auth-shell">
-      <span className="build-version">ver.: alpha 0.3</span>
+      <span className="build-version">ver.: 0.1</span>
       <section className="brand-panel">
         <span className="sr-only">Tünde Divat Online</span>
       </section>
@@ -602,7 +616,10 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
     <div className="store-shell">
       <header className="store-topbar">
         <div className="store-brand-lockup">
-          <button className="logo-home-btn" onClick={() => goToStoreView("catalog")}><img className="header-logo" src="/assets/tunde-divat-online-logo.jpeg" alt="Tünde Divat Online" /></button>
+          <div className="store-logo-column">
+            <button className="logo-home-btn" onClick={() => goToStoreView("catalog")}><img className="header-logo" src="/assets/tunde-divat-online-logo.jpeg" alt="Tünde Divat Online" /></button>
+            {onBackToAdmin && <button className="secondary mobile-admin-return" onClick={onBackToAdmin}>Vissza az adminba</button>}
+          </div>
           <div className="store-user">
             <span>{user.username} | felhasználó</span>
             <strong>{storeView === "reservations" ? "Foglalásaim" : storeView === "favorites" ? "Kívánságlistám" : "Aktuális kínálat"}</strong>
@@ -916,15 +933,24 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
   const [tick, setTick] = useState(0);
   const activeReservation = reservations[0];
   const deadlineExpired = product.reservableUntil ? Date.now() > new Date(product.reservableUntil).getTime() : false;
+  const selectedSizeLimit = sizes.find((item) => item.size === size)?.quantity ?? null;
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick((value) => value + 1), 1_000);
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (selectedSizeLimit !== null && quantity > selectedSizeLimit) {
+      setQuantity(Math.max(1, selectedSizeLimit));
+    }
+  }, [quantity, selectedSizeLimit]);
+
   async function reserve() {
     setError("");
     if (!size) return setError("Válassz méretet a foglaláshoz.");
+    if (selectedSizeLimit !== null && selectedSizeLimit <= 0) return setError("Ebből a méretből jelenleg nincs foglalható darab.");
+    if (selectedSizeLimit !== null && quantity > selectedSizeLimit) return setError(`Ebből a méretből legfeljebb ${selectedSizeLimit} db foglalható.`);
     const selectedPickup = earliestPickup ?? pickups[0];
     const pickupLine = selectedPickup ? `${selectedPickup.address}, ${formatPickupRange(selectedPickup)}` : "Az átvételi időpontot később egyeztetjük.";
     const confirmed = window.confirm(
@@ -957,10 +983,10 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
         <div className="product-detail-info">
           <h2>{customerProductTitle(product)}</h2>
           <strong className="detail-price">{formatHuf(product.price)}</strong>
-          <div className="quantity-row">
-            <button onClick={() => setQuantity((value) => Math.max(1, value - 1))}>-</button>
-            <span>{quantity}</span>
-            <button onClick={() => setQuantity((value) => value + 1)}>+</button>
+            <div className="quantity-row">
+              <button onClick={() => setQuantity((value) => Math.max(1, value - 1))}>-</button>
+              <span>{quantity}</span>
+            <button disabled={selectedSizeLimit !== null && quantity >= selectedSizeLimit} onClick={() => setQuantity((value) => value + 1)}>+</button>
             <em>db</em>
           </div>
           {activeReservation ? (
@@ -970,14 +996,14 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
             <label>
               Méret
               <select value={size} onChange={(event) => setSize(event.target.value)}>
-                {sizes.map((item) => <option value={item.size} key={item.size}>{item.size}</option>)}
+                {sizes.map((item) => <option value={item.size} key={item.size}>{item.size}{item.quantity != null ? ` - max. ${item.quantity} db` : ""}</option>)}
               </select>
             </label>
           </div>
           )}
           {error && <p className="error">{error}</p>}
-          <button className="tdo-primary icon-text modal-reserve-button" disabled={busy || !!activeReservation || deadlineExpired} onClick={reserve}>
-            <ShoppingBag size={18} /> {deadlineExpired ? "A foglalási határidő lejárt" : activeReservation ? "Már lefoglalva" : "Lefoglalom személyes átvételre"}
+          <button className="tdo-primary icon-text modal-reserve-button" disabled={busy || !!activeReservation || deadlineExpired || selectedSizeLimit === 0} onClick={reserve}>
+            <ShoppingBag size={18} /> {deadlineExpired ? "A foglalási határidő lejárt" : activeReservation ? "Már lefoglalva" : selectedSizeLimit === 0 ? "Ez a méret elfogyott" : "Lefoglalom személyes átvételre"}
           </button>
           <div className="detail-facts">
             <div><span>Elérhető Méretek:</span><strong className="detail-fact-value">{sizes.map((s) => s.size).join(", ")}</strong></div>
@@ -997,6 +1023,26 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
 function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [view, setView] = useState<AdminView>("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const adminViewOrder: { id: AdminView; label: string }[] = [
+    { id: "new", label: "1. Új termék" },
+    { id: "ai", label: "2. AI-generálás" },
+    { id: "share", label: "3. Megosztás" },
+    { id: "current", label: "4. Jelenlegi kínálat" },
+    { id: "orders", label: "5. Rendelők és rendelések" },
+    { id: "pickup", label: "6. Személyes átvétel megadása" },
+    { id: "deleted", label: "Törölt tételek" },
+    { id: "users", label: "Regisztrált felhasználók" }
+  ];
+  const mobileViewIndex = adminViewOrder.findIndex((item) => item.id === view);
+  const mobileViewLabel = mobileViewIndex >= 0 ? adminViewOrder[mobileViewIndex].label : "";
+
+  function jumpMobileView(direction: -1 | 1) {
+    if (mobileViewIndex < 0) return;
+    const nextIndex = (mobileViewIndex + direction + adminViewOrder.length) % adminViewOrder.length;
+    setView(adminViewOrder[nextIndex].id);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   async function logout() {
     await api("/api/auth/logout", { method: "POST" });
     onLogout();
@@ -1031,6 +1077,17 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
         <button className="ghost icon-text" onClick={logout}><LogOut size={18} /> Kilépés</button>
       </aside>
       <main className="content">
+        {mobileViewIndex >= 0 && (
+          <div className="mobile-view-switcher" aria-label="Dashboard nézetváltó">
+            <button className="secondary" onClick={() => jumpMobileView(-1)} aria-label="Előző admin ablak">
+              <ChevronLeft size={20} />
+            </button>
+            <strong>{mobileViewLabel}</strong>
+            <button className="secondary" onClick={() => jumpMobileView(1)} aria-label="Következő admin ablak">
+              <ChevronRight size={20} />
+            </button>
+          </div>
+        )}
         {view !== "dashboard" && (
           <button className="secondary icon-text admin-back-button" onClick={() => setView("dashboard")}>
             <ArrowLeft size={18} /> Vissza a főmenübe
@@ -1191,6 +1248,15 @@ function Dashboard({ onNew, onStorefront, onAi, onShare, onCurrent, onOrders, on
   );
 }
 
+function sizeQuantityPayload(sizes: string[], quantities: Record<string, string>) {
+  return Object.fromEntries(
+    sizes
+      .map((size) => [size, quantities[size]?.trim()] as const)
+      .filter(([, quantity]) => quantity !== undefined && quantity !== "")
+      .map(([size, quantity]) => [size, Number(quantity)])
+  );
+}
+
 function ProductWizard({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState<Step>("photo");
   const [file, setFile] = useState<File | null>(null);
@@ -1201,6 +1267,7 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
     product_name: "",
     price: "",
     available_sizes: [] as string[],
+    size_quantities: {} as Record<string, string>,
     category: "",
     description: "",
     reservable_until: "",
@@ -1216,7 +1283,6 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
   }
 
   async function createAndUpload() {
-    if (!file) return setError("Adj hozzá képet a folytatáshoz.");
     setBusy(true);
     setError("");
     try {
@@ -1228,17 +1294,22 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
           product_name: form.product_name || null,
           price: Number(form.price),
           category: form.category || null,
+          size_quantities: sizeQuantityPayload(form.available_sizes, form.size_quantities),
           reservable_until: form.no_expiry || !form.reservable_until ? null : new Date(form.reservable_until).toISOString(),
           reservable_duration_hours: form.no_expiry || form.reservable_until ? null : Number(form.reservable_duration_hours)
         })
       });
-      const fd = new FormData();
-      fd.append("image", file);
-      const uploaded = await api<{ product: Product }>(`/api/products/${created.product.id}/image`, {
-        method: "POST",
-        body: fd
-      });
-      setProduct(uploaded.product);
+      if (file) {
+        const fd = new FormData();
+        fd.append("image", file);
+        const uploaded = await api<{ product: Product }>(`/api/products/${created.product.id}/image`, {
+          method: "POST",
+          body: fd
+        });
+        setProduct(uploaded.product);
+      } else {
+        setProduct(created.product);
+      }
       setStep("saved");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Mentési hiba");
@@ -1271,7 +1342,9 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
           <div className="upload-zone">
             {preview ? <img src={preview} alt="Előnézet" /> : <Camera size={44} />}
           </div>
-          {file && <button className="primary upload-next" onClick={() => setStep("data")}>Feltöltés és adatok megadása</button>}
+          <button className="primary upload-next" onClick={() => setStep("data")}>
+            {file ? "Feltöltés és adatok megadása" : "Tovább az adatokhoz kép nélkül"}
+          </button>
         </div>
       )}
       {step === "data" && (
@@ -1280,6 +1353,11 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
           <Text label="Termék megnevezése" value={form.product_name} onChange={(product_name) => setForm({ ...form, product_name })} />
           <Text label="Ár (Ft)" type="number" value={form.price} onChange={(price) => setForm({ ...form, price })} />
           <SizePicker value={form.available_sizes} onChange={(available_sizes) => setForm({ ...form, available_sizes })} />
+          <SizeQuantityFields
+            sizes={form.available_sizes}
+            quantities={form.size_quantities}
+            onChange={(size, quantity) => setForm({ ...form, size_quantities: { ...form.size_quantities, [size]: quantity } })}
+          />
           <Text label="Kategória" value={form.category} onChange={(category) => setForm({ ...form, category })} />
           <ReservationDeadlinePicker
             durationHours={form.reservable_duration_hours}
@@ -1301,7 +1379,7 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
       )}
       {step === "saved" && product && (
         <div className="panel summary">
-          <img src={imageUrl(original)} alt="Eredeti kép" />
+          {original ? <img src={imageUrl(original)} alt="Eredeti kép" /> : <div className="empty-state">Ehhez a termékhez még nincs feltöltött kép.</div>}
           <div>
             <h2>Termék mentve</h2>
             <dl>
@@ -1309,7 +1387,7 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
               <dt>Termék megnevezése</dt><dd>{product.productName || "-"}</dd>
               <dt>Publikus sorszám</dt><dd>Honlapra megosztáskor kapja meg.</dd>
               <dt>Ár</dt><dd>{formatHuf(product.price)}</dd>
-              <dt>Méretek</dt><dd>{product.sizes.map((s) => s.size).join("; ")}</dd>
+              <dt>Méretek</dt><dd>{product.sizes.map((s) => `${s.size}${s.quantity != null ? ` (${s.quantity} db)` : ""}`).join("; ")}</dd>
             </dl>
             <div className="button-row">
               <button className="secondary" onClick={() => setStep("data")}>Adatok módosítása</button>
@@ -1396,6 +1474,36 @@ function SizePicker({ value, onChange }: { value: string[]; onChange: (value: st
           {size}
         </label>
       ))}
+    </fieldset>
+  );
+}
+
+function SizeQuantityFields({ sizes, quantities, onChange }: {
+  sizes: string[];
+  quantities: Record<string, string>;
+  onChange: (size: string, quantity: string) => void;
+}) {
+  const sortedSizes = [...sizes].sort((a, b) => allowedSizes.indexOf(a as (typeof allowedSizes)[number]) - allowedSizes.indexOf(b as (typeof allowedSizes)[number]));
+  if (!sortedSizes.length) return null;
+  return (
+    <fieldset className="size-quantity-fields wide">
+      <legend>Méret maximumok</legend>
+      <p>Üresen hagyva az adott méret korlátlanul foglalható.</p>
+      <div className="size-quantity-grid">
+        {sortedSizes.map((size) => (
+          <label key={size}>
+            <span>{size}</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              placeholder="Korlátlan"
+              value={quantities[size] ?? ""}
+              onChange={(event) => onChange(size, event.target.value)}
+            />
+          </label>
+        ))}
+      </div>
     </fieldset>
   );
 }
@@ -1696,6 +1804,7 @@ function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () =
     product_name: product.productName ?? "",
     price: String(product.price),
     available_sizes: product.sizes.map((size) => size.size),
+    size_quantities: Object.fromEntries(product.sizes.map((size) => [size.size, size.quantity == null ? "" : String(size.quantity)])) as Record<string, string>,
     category: product.category ?? "",
     description: product.description ?? "",
     reservable_until: toLocalDateTimeInput(product.reservableUntil),
@@ -1716,6 +1825,7 @@ function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () =
           product_name: form.product_name || null,
           price: Number(form.price),
           available_sizes: form.available_sizes,
+          size_quantities: sizeQuantityPayload(form.available_sizes, form.size_quantities),
           category: form.category || null,
           description: form.description || null,
           reservable_until: form.no_expiry || !form.reservable_until ? null : new Date(form.reservable_until).toISOString(),
@@ -1737,6 +1847,11 @@ function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () =
       <Text label="Termék megnevezése" value={form.product_name} onChange={(product_name) => setForm({ ...form, product_name })} />
       <Text label="Ár (Ft)" type="number" value={form.price} onChange={(price) => setForm({ ...form, price })} />
       <SizePicker value={form.available_sizes} onChange={(available_sizes) => setForm({ ...form, available_sizes })} />
+      <SizeQuantityFields
+        sizes={form.available_sizes}
+        quantities={form.size_quantities}
+        onChange={(size, quantity) => setForm({ ...form, size_quantities: { ...form.size_quantities, [size]: quantity } })}
+      />
       <Text label="Kategória" value={form.category} onChange={(category) => setForm({ ...form, category })} />
       <label className="checkbox-line wide">
         <input

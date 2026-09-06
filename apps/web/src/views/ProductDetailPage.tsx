@@ -24,26 +24,35 @@ export function ProductDetailPage({ product, pickups, reservations, isFavorite, 
   const [tick, setTick] = useState(0);
   const activeReservation = reservations[0];
   const deadlineExpired = product.reservableUntil ? Date.now() > new Date(product.reservableUntil).getTime() : false;
+  const selectedSizeLimit = product.sizes.find((item) => item.size === size)?.quantity ?? null;
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick((value) => value + 1), 60_000);
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (selectedSizeLimit !== null && quantity > selectedSizeLimit) {
+      setQuantity(Math.max(1, selectedSizeLimit));
+    }
+  }, [quantity, selectedSizeLimit]);
+
   async function reserve() {
     setError("");
     if (!size) return setError("Válassz méretet a foglaláshoz.");
+    if (selectedSizeLimit !== null && selectedSizeLimit <= 0) return setError("Ebből a méretből jelenleg nincs foglalható darab.");
+    if (selectedSizeLimit !== null && quantity > selectedSizeLimit) return setError(`Ebből a méretből legfeljebb ${selectedSizeLimit} db foglalható.`);
     const selectedPickup = earliestPickup ?? pickups[0];
-    if (!selectedPickup) return setError("Nincs megadva személyes átvételi időpont.");
+    const pickupLine = selectedPickup ? `${selectedPickup.address}, ${formatPickupRange(selectedPickup)}` : "Az átvételi időpontot később egyeztetjük.";
     const confirmed = window.confirm(
-      `Kérjük, csak akkor erősítsd meg a foglalást, ha biztosan át tudod venni a terméket a választott időpontban.\n\nTermék: #${product.displayNumber}\nMéret: ${size}\nDarabszám: ${quantity} db\nÁtvétel: ${selectedPickup ? `${selectedPickup.address}, ${formatPickupRange(selectedPickup)}` : ""}\n\nMegerősíted a foglalást?`
+      `Kérjük, csak akkor erősítsd meg a foglalást, ha biztosan át tudod venni a terméket.\n\nTermék: #${product.displayNumber}\nMéret: ${size}\nDarabszám: ${quantity} db\nÁtvétel: ${pickupLine}\n\nMegerősíted a foglalást?`
     );
     if (!confirmed) return;
     setBusy(true);
     try {
       await api("/api/reservations", {
         method: "POST",
-        body: JSON.stringify({ product_id: product.id, size, pickup_id: selectedPickup.id, quantity })
+        body: JSON.stringify({ product_id: product.id, size, pickup_id: selectedPickup?.id ?? null, quantity })
       });
       await onReserved();
     } catch (err) {
@@ -68,7 +77,7 @@ export function ProductDetailPage({ product, pickups, reservations, isFavorite, 
           <div className="quantity-row">
             <button onClick={() => setQuantity((value) => Math.max(1, value - 1))}>-</button>
             <span>{quantity}</span>
-            <button onClick={() => setQuantity((value) => value + 1)}>+</button>
+            <button disabled={selectedSizeLimit !== null && quantity >= selectedSizeLimit} onClick={() => setQuantity((value) => value + 1)}>+</button>
             <em>db</em>
           </div>
           {activeReservation ? (
@@ -78,14 +87,14 @@ export function ProductDetailPage({ product, pickups, reservations, isFavorite, 
             <label>
               Méret
               <select value={size} onChange={(event) => setSize(event.target.value)}>
-                {product.sizes.map((item) => <option value={item.size} key={item.size}>{item.size}</option>)}
+                {product.sizes.map((item) => <option value={item.size} key={item.size}>{item.size}{item.quantity != null ? ` - max. ${item.quantity} db` : ""}</option>)}
               </select>
             </label>
           </div>
           )}
           {error && <p className="error">{error}</p>}
-          <button className="tdo-primary icon-text modal-reserve-button" disabled={busy || !!activeReservation || deadlineExpired || !pickups.length} onClick={reserve}>
-            <ShoppingBag size={18} /> {deadlineExpired ? "A foglalási határidő lejárt" : activeReservation ? "Már lefoglalva" : "Lefoglalom személyes átvételre"}
+          <button className="tdo-primary icon-text modal-reserve-button" disabled={busy || !!activeReservation || deadlineExpired || selectedSizeLimit === 0} onClick={reserve}>
+            <ShoppingBag size={18} /> {deadlineExpired ? "A foglalási határidő lejárt" : activeReservation ? "Már lefoglalva" : selectedSizeLimit === 0 ? "Ez a méret elfogyott" : "Lefoglalom személyes átvételre"}
           </button>
           <div className="detail-facts">
             <div><span>Elérhető Méretek:</span><strong>{product.sizes.map((s) => s.size).join(", ")}</strong></div>

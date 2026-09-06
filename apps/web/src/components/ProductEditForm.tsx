@@ -2,7 +2,16 @@ import { useState } from "react";
 import { api } from "../lib/api.js";
 import { toLocalDateTimeInput } from "../lib/format.js";
 import type { Product } from "../types.js";
-import { SizePicker, Text } from "./forms.js";
+import { SizePicker, SizeQuantityFields, Text } from "./forms.js";
+
+function sizeQuantityPayload(sizes: string[], quantities: Record<string, string>) {
+  return Object.fromEntries(
+    sizes
+      .map((size) => [size, quantities[size]?.trim()] as const)
+      .filter(([, quantity]) => quantity !== undefined && quantity !== "")
+      .map(([size, quantity]) => [size, Number(quantity)])
+  );
+}
 
 export function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () => void }) {
   const [form, setForm] = useState({
@@ -10,6 +19,7 @@ export function ProductEditForm({ product, onSaved }: { product: Product; onSave
     product_name: product.productName ?? "",
     price: String(product.price),
     available_sizes: product.sizes.map((size) => size.size),
+    size_quantities: Object.fromEntries(product.sizes.map((size) => [size.size, size.quantity == null ? "" : String(size.quantity)])) as Record<string, string>,
     category: product.category ?? "",
     description: product.description ?? "",
     reservable_until: toLocalDateTimeInput(product.reservableUntil),
@@ -30,6 +40,7 @@ export function ProductEditForm({ product, onSaved }: { product: Product; onSave
           product_name: form.product_name || null,
           price: Number(form.price),
           available_sizes: form.available_sizes,
+          size_quantities: sizeQuantityPayload(form.available_sizes, form.size_quantities),
           category: form.category || null,
           description: form.description || null,
           reservable_until: form.no_expiry || !form.reservable_until ? null : new Date(form.reservable_until).toISOString(),
@@ -51,6 +62,7 @@ export function ProductEditForm({ product, onSaved }: { product: Product; onSave
       <Text label="Termék megnevezése" value={form.product_name} onChange={(product_name) => setForm({ ...form, product_name })} />
       <Text label="Ár (Ft)" type="number" value={form.price} onChange={(price) => setForm({ ...form, price })} />
       <SizePicker value={form.available_sizes} onChange={(available_sizes) => setForm({ ...form, available_sizes })} />
+      <SizeQuantityFields sizes={form.available_sizes} quantities={form.size_quantities} onChange={(size, quantity) => setForm({ ...form, size_quantities: { ...form.size_quantities, [size]: quantity } })} />
       <Text label="Kategória" value={form.category} onChange={(category) => setForm({ ...form, category })} />
       <label className="checkbox-line wide">
         <input

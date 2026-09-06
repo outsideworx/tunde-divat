@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, LogOut, Menu, PanelLeftClose } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, LogOut, Menu, PanelLeftClose } from "lucide-react";
 import { api } from "./lib/api.js";
 import type { AdminView, User } from "./types.js";
 import { Login } from "./views/Login.js";
@@ -39,6 +39,26 @@ export function App() {
 function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [view, setView] = useState<AdminView>("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const adminViewOrder: { id: AdminView; label: string }[] = [
+    { id: "new", label: "1. Új termék" },
+    { id: "ai", label: "2. AI-generálás" },
+    { id: "share", label: "3. Megosztás" },
+    { id: "current", label: "4. Jelenlegi kínálat" },
+    { id: "orders", label: "5. Rendelők és rendelések" },
+    { id: "pickup", label: "6. Személyes átvétel megadása" },
+    { id: "deleted", label: "Törölt tételek" },
+    { id: "users", label: "Regisztrált felhasználók" }
+  ];
+  const mobileViewIndex = adminViewOrder.findIndex((item) => item.id === view);
+  const mobileViewLabel = mobileViewIndex >= 0 ? adminViewOrder[mobileViewIndex].label : "";
+
+  function jumpMobileView(direction: -1 | 1) {
+    if (mobileViewIndex < 0) return;
+    const nextIndex = (mobileViewIndex + direction + adminViewOrder.length) % adminViewOrder.length;
+    setView(adminViewOrder[nextIndex].id);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   async function logout() {
     await api("/api/auth/logout", { method: "POST" });
     onLogout();
@@ -73,6 +93,17 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
         <button className="ghost icon-text" onClick={logout}><LogOut size={18} /> Kilépés</button>
       </aside>
       <main className="content">
+        {mobileViewIndex >= 0 && (
+          <div className="mobile-view-switcher" aria-label="Dashboard nézetváltó">
+            <button className="secondary" onClick={() => jumpMobileView(-1)} aria-label="Előző admin ablak">
+              <ChevronLeft size={20} />
+            </button>
+            <strong>{mobileViewLabel}</strong>
+            <button className="secondary" onClick={() => jumpMobileView(1)} aria-label="Következő admin ablak">
+              <ChevronRight size={20} />
+            </button>
+          </div>
+        )}
         {view !== "dashboard" && (
           <button className="secondary icon-text admin-back-button" onClick={() => setView("dashboard")}>
             <ArrowLeft size={18} /> Vissza a főmenübe

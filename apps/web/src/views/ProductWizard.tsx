@@ -2,8 +2,17 @@ import { useState } from "react";
 import { Camera, Upload } from "lucide-react";
 import { formatHuf } from "@fashion-mvp/shared";
 import { api, imageUrl } from "../lib/api.js";
-import { ReservationDeadlinePicker, SizePicker, Stepper, Text } from "../components/forms.js";
+import { ReservationDeadlinePicker, SizePicker, SizeQuantityFields, Stepper, Text } from "../components/forms.js";
 import type { Product, Step } from "../types.js";
+
+function sizeQuantityPayload(sizes: string[], quantities: Record<string, string>) {
+  return Object.fromEntries(
+    sizes
+      .map((size) => [size, quantities[size]?.trim()] as const)
+      .filter(([, quantity]) => quantity !== undefined && quantity !== "")
+      .map(([size, quantity]) => [size, Number(quantity)])
+  );
+}
 
 export function ProductWizard({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState<Step>("photo");
@@ -15,6 +24,7 @@ export function ProductWizard({ onDone }: { onDone: () => void }) {
     product_name: "",
     price: "",
     available_sizes: [] as string[],
+    size_quantities: {} as Record<string, string>,
     category: "",
     description: "",
     reservable_until: "",
@@ -30,7 +40,6 @@ export function ProductWizard({ onDone }: { onDone: () => void }) {
   }
 
   async function createAndUpload() {
-    if (!file) return setError("Adj hozzá képet a folytatáshoz.");
     setBusy(true);
     setError("");
     try {
@@ -41,17 +50,22 @@ export function ProductWizard({ onDone }: { onDone: () => void }) {
           product_name: form.product_name || null,
           price: Number(form.price),
           category: form.category || null,
+          size_quantities: sizeQuantityPayload(form.available_sizes, form.size_quantities),
           reservable_until: form.no_expiry || !form.reservable_until ? null : new Date(form.reservable_until).toISOString(),
           reservable_duration_hours: form.no_expiry || form.reservable_until ? null : Number(form.reservable_duration_hours)
         })
       });
-      const fd = new FormData();
-      fd.append("image", file);
-      const uploaded = await api<{ product: Product }>(`/api/products/${created.product.id}/image`, {
-        method: "POST",
-        body: fd
-      });
-      setProduct(uploaded.product);
+      if (file) {
+        const fd = new FormData();
+        fd.append("image", file);
+        const uploaded = await api<{ product: Product }>(`/api/products/${created.product.id}/image`, {
+          method: "POST",
+          body: fd
+        });
+        setProduct(uploaded.product);
+      } else {
+        setProduct(created.product);
+      }
       setStep("saved");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Mentési hiba");
@@ -84,7 +98,9 @@ export function ProductWizard({ onDone }: { onDone: () => void }) {
           <div className="upload-zone">
             {preview ? <img src={preview} alt="Előnézet" /> : <Camera size={44} />}
           </div>
-          {file && <button className="primary upload-next" onClick={() => setStep("data")}>Feltöltés és adatok megadása</button>}
+          <button className="primary upload-next" onClick={() => setStep("data")}>
+            {file ? "Feltöltés és adatok megadása" : "Tovább az adatokhoz kép nélkül"}
+          </button>
         </div>
       )}
       {step === "data" && (
@@ -93,6 +109,7 @@ export function ProductWizard({ onDone }: { onDone: () => void }) {
           <Text label="Termék megnevezése" value={form.product_name} onChange={(product_name) => setForm({ ...form, product_name })} />
           <Text label="Ár (Ft)" type="number" value={form.price} onChange={(price) => setForm({ ...form, price })} />
           <SizePicker value={form.available_sizes} onChange={(available_sizes) => setForm({ ...form, available_sizes })} />
+          <SizeQuantityFields sizes={form.available_sizes} quantities={form.size_quantities} onChange={(size, quantity) => setForm({ ...form, size_quantities: { ...form.size_quantities, [size]: quantity } })} />
           <Text label="Kategória" value={form.category} onChange={(category) => setForm({ ...form, category })} />
           <ReservationDeadlinePicker
             durationHours={form.reservable_duration_hours}
@@ -114,7 +131,7 @@ export function ProductWizard({ onDone }: { onDone: () => void }) {
       )}
       {step === "saved" && product && (
         <div className="panel summary">
-          <img src={imageUrl(original)} alt="Eredeti kép" />
+          {original ? <img src={imageUrl(original)} alt="Eredeti kép" /> : <div className="empty-state">Ehhez a termékhez még nincs feltöltött kép.</div>}
           <div>
             <h2>Termék mentve</h2>
             <dl>
@@ -122,7 +139,7 @@ export function ProductWizard({ onDone }: { onDone: () => void }) {
               <dt>Termék megnevezése</dt><dd>{product.productName || "-"}</dd>
               <dt>Publikus sorszám</dt><dd>Honlapra megosztáskor kapja meg.</dd>
               <dt>Ár</dt><dd>{formatHuf(product.price)}</dd>
-              <dt>Méretek</dt><dd>{product.sizes.map((s) => s.size).join("; ")}</dd>
+              <dt>Méretek</dt><dd>{product.sizes.map((s) => `${s.size}${s.quantity != null ? ` (${s.quantity} db)` : ""}`).join("; ")}</dd>
             </dl>
             <div className="button-row">
               <button className="secondary" onClick={() => setStep("data")}>Adatok módosítása</button>

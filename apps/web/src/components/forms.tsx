@@ -34,6 +34,29 @@ export function SizePicker({ value, onChange }: { value: string[]; onChange: (va
   );
 }
 
+export function SizeQuantityFields({ sizes, quantities, onChange }: {
+  sizes: string[];
+  quantities: Record<string, string>;
+  onChange: (size: string, quantity: string) => void;
+}) {
+  const sortedSizes = [...sizes].sort((a, b) => allowedSizes.indexOf(a as (typeof allowedSizes)[number]) - allowedSizes.indexOf(b as (typeof allowedSizes)[number]));
+  if (!sortedSizes.length) return null;
+  return (
+    <fieldset className="size-quantity-fields wide">
+      <legend>Méret maximumok</legend>
+      <p>Üresen hagyva az adott méret korlátlanul foglalható.</p>
+      <div className="size-quantity-grid">
+        {sortedSizes.map((size) => (
+          <label key={size}>
+            <span>{size}</span>
+            <input type="number" min="0" step="1" placeholder="Korlátlan" value={quantities[size] ?? ""} onChange={(event) => onChange(size, event.target.value)} />
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
 export function ReservationDeadlinePicker({ durationHours, customDate, noExpiry, onDuration, onCustomDate, onNoExpiry }: {
   durationHours: string;
   customDate: string;

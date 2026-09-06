@@ -101,7 +101,10 @@ export function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: Us
     <div className="store-shell">
       <header className="store-topbar">
         <div className="store-brand-lockup">
-          <button className="logo-home-btn" onClick={() => goToStoreView("catalog")}><img className="header-logo" src="/assets/tunde-divat-online-logo.jpeg" alt="Tünde Divat Online" /></button>
+          <div className="store-logo-column">
+            <button className="logo-home-btn" onClick={() => goToStoreView("catalog")}><img className="header-logo" src="/assets/tunde-divat-online-logo.jpeg" alt="Tünde Divat Online" /></button>
+            {onBackToAdmin && <button className="secondary mobile-admin-return" onClick={onBackToAdmin}>Vissza az adminba</button>}
+          </div>
           <div className="store-user">
             <span>{user.username} | felhasználó</span>
             <strong>{storeView === "reservations" ? "Foglalásaim" : storeView === "favorites" ? "Kedvencek" : "Aktuális kínálat"}</strong>

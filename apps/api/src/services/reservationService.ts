@@ -38,8 +38,20 @@ export class ReservationService {
     if (product.reservableUntil && Date.now() > product.reservableUntil.getTime()) {
       throw new AppError(400, "A foglalási határidő lejárt.");
     }
-    if (!product.sizes.some((size) => size.size === payload.size)) {
+    const selectedSize = product.sizes.find((size) => size.size === payload.size);
+    if (!selectedSize) {
       throw new AppError(400, "Ez a méret nem foglalható ennél a terméknél.");
+    }
+    const requestedQuantity = payload.quantity ?? 1;
+    if (selectedSize.quantity !== null) {
+      const reserved = await prisma.reservation.aggregate({
+        where: { productFk: product.id, size: payload.size, cancelledAt: null },
+        _sum: { quantity: true }
+      });
+      const remaining = selectedSize.quantity - (reserved._sum.quantity ?? 0);
+      if (requestedQuantity > remaining) {
+        throw new AppError(400, remaining > 0 ? `Ebből a méretből már csak ${remaining} db foglalható.` : "Ebből a méretből jelenleg nincs több foglalható darab.");
+      }
     }
     const pickup = payload.pickup_id ? await prisma.pickupOption.findUnique({ where: { id: payload.pickup_id } }) : null;
     if (payload.pickup_id && (!pickup || !pickup.isActive)) throw new AppError(400, "Válassz érvényes személyes átvételi időpontot.");
@@ -56,7 +68,7 @@ export class ReservationService {
         userId,
         pickupFk: pickup?.id ?? null,
         size: payload.size,
-        quantity: payload.quantity ?? 1,
+        quantity: requestedQuantity,
         canCancel: !hadCancelledBefore
       },
       include: includeReservation

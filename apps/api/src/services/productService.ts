@@ -18,6 +18,13 @@ type ProductWithRelations = Prisma.ProductGetPayload<{ include: typeof includePr
 const PUBLIC_DISPLAY_COUNTER = "PUBLIC_DISPLAY_NUMBER";
 const PRODUCT_ID_COUNTER = "PRODUCT_ID_NUMBER";
 
+function sizeCreateData(payload: Pick<ProductPayload, "available_sizes" | "size_quantities">) {
+  return payload.available_sizes.map((size) => ({
+    size,
+    quantity: payload.size_quantities?.[size] ?? null
+  }));
+}
+
 export class ProductService {
   private storage: StorageService;
   private ai: ImageGenerationService;
@@ -71,7 +78,7 @@ export class ProductService {
             reservableUntil: payload.reservable_until,
             reservableDurationHours: payload.reservable_duration_hours,
             createdBy: userId,
-            sizes: { create: payload.available_sizes.map((size) => ({ size })) }
+            sizes: { create: sizeCreateData(payload) }
           },
           include: includeProduct
         });
@@ -108,7 +115,7 @@ export class ProductService {
           targetGroup: payload.target_group,
           reservableUntil: payload.reservable_until === undefined ? existing.reservableUntil : payload.reservable_until,
           reservableDurationHours: payload.reservable_duration_hours === undefined ? existing.reservableDurationHours : payload.reservable_duration_hours,
-          sizes: nextSizes ? { create: nextSizes.map((size) => ({ size })) } : undefined
+          sizes: nextSizes ? { create: sizeCreateData({ available_sizes: nextSizes, size_quantities: payload.size_quantities }) } : undefined
         },
         include: includeProduct
       });

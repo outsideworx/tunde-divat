@@ -27,6 +27,7 @@ export const productPayloadSchema = z.object({
   display_number: z.string().trim().min(1).max(20).regex(/^[\p{L}\p{N}-]+$/u).optional().nullable(),
   price: z.coerce.number().int().positive().max(10_000_000),
   available_sizes: z.array(z.enum(allowedSizes)).min(1).max(12),
+  size_quantities: z.record(z.coerce.number().int().nonnegative().max(10_000)).optional(),
   category: z.string().trim().max(80).optional().nullable(),
   color: z.string().trim().max(80).optional().nullable(),
   brand: z.string().trim().max(80).optional().nullable(),

@@ -1,9 +1,24 @@
 import type { ProductImageDto } from "@fashion-mvp/shared";
 
-// Same-origin by default: in production the API serves the built SPA, so `/api`
-// paths resolve against the current origin. For split local dev (Vite on :5173,
-// API on :4000) set VITE_API_URL to the API origin.
-export const API_BASE = import.meta.env.VITE_API_URL ?? "";
+// Same-origin by default. In local network testing, a localhost API URL from
+// `.env` must point to the Mac hostname/IP, not the phone's own localhost.
+function getApiBase() {
+  const configured = import.meta.env.VITE_API_URL as string | undefined;
+  if (!configured) return "";
+  try {
+    const url = new URL(configured);
+    const isLocalApi = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+    const isRemoteBrowser = window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1";
+    if (isLocalApi && isRemoteBrowser) {
+      return "";
+    }
+    return url.origin;
+  } catch {
+    return configured;
+  }
+}
+
+export const API_BASE = getApiBase();
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {

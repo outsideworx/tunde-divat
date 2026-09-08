@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { isProduction } from "../config/env.js";
+import { logger } from "./securityLog.js";
 
 export class AppError extends Error {
   constructor(public statusCode: number, message: string) {
@@ -15,7 +16,7 @@ export function asyncHandler<T extends Request>(
   };
 }
 
-export function errorHandler(err: Error, _req: Request, res: Response, _next: NextFunction) {
+export function errorHandler(err: Error, req: Request, res: Response, _next: NextFunction) {
   const isDatabaseConnectionError =
     err.name === "PrismaClientInitializationError" ||
     err.message.includes("Can't reach database server") ||
@@ -29,7 +30,13 @@ export function errorHandler(err: Error, _req: Request, res: Response, _next: Ne
         ? "Az adatbázis nem elérhető. Ellenőrizd a SQLite adatbázisfájlt, majd futtasd az inicializálást és a teszt felhasználók seedelését."
         : "Internal server error";
   if (!(err instanceof AppError)) {
-    console.error(err);
+    logger.error("request_error", {
+      method: req.method,
+      path: req.path,
+      statusCode,
+      name: err.name,
+      message: err.message
+    });
   }
   res.status(statusCode).json({
     error: message,

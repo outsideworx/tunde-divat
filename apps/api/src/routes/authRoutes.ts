@@ -5,7 +5,7 @@ import { prisma } from "../db/prisma.js";
 import { asyncHandler, AppError } from "../utils/errors.js";
 import { clearSessionCookie, requireAdmin, requireAuth, setSessionCookie, signSession } from "../middleware/auth.js";
 import { loginLimiter } from "../middleware/rateLimiters.js";
-import { securityLog } from "../utils/securityLog.js";
+import { logger } from "../utils/securityLog.js";
 
 export const authRoutes = Router();
 const INVITE_CODE_KEY = "REGISTRATION_INVITE_CODE";
@@ -21,11 +21,12 @@ authRoutes.post(
     const payload = loginSchema.parse(req.body);
     const user = await prisma.user.findUnique({ where: { username: payload.username } });
     if (!user || !user.isActive || !(await argon2.verify(user.passwordHash, payload.password))) {
-      securityLog("login_failure", { username: payload.username, ip: req.ip });
+      logger.warn("login", { outcome: "failure", username: payload.username, ip: req.ip });
       throw new AppError(401, "Invalid username or password");
     }
     const authUser = authUserFrom(user);
     setSessionCookie(res, signSession(authUser));
+    logger.info("login", { outcome: "success", userId: authUser.id, username: authUser.username, ip: req.ip });
     res.json({ user: authUser });
   })
 );
@@ -37,7 +38,7 @@ authRoutes.post(
     const payload = registerSchema.parse(req.body);
     const setting = await prisma.appSetting.findUnique({ where: { key: INVITE_CODE_KEY } });
     if (!setting || setting.value !== payload.invite_code) {
-      securityLog("registration_failure", { username: payload.username, ip: req.ip, reason: "invalid_invite_code" });
+      logger.warn("registration", { outcome: "failure", username: payload.username, ip: req.ip, reason: "invalid_invite_code" });
       throw new AppError(403, "Érvénytelen meghívókód.");
     }
     const existing = await prisma.user.findUnique({ where: { username: payload.username } });
@@ -55,6 +56,7 @@ authRoutes.post(
     });
     const authUser = authUserFrom(user);
     setSessionCookie(res, signSession(authUser));
+    logger.info("registration", { outcome: "success", userId: authUser.id, username: authUser.username, ip: req.ip });
     res.status(201).json({ user: authUser });
   })
 );
@@ -199,6 +201,7 @@ authRoutes.put(
 
 authRoutes.post("/logout", requireAuth, (req, res) => {
   clearSessionCookie(res);
+  logger.info("logout", { outcome: "success", userId: req.user!.id, username: req.user!.username });
   res.json({ ok: true });
 });
 

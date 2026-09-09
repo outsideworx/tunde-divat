@@ -511,6 +511,92 @@ textarea { min-height: 92px; resize: vertical; }
   grid-column: 1 / -1;
   margin: 0;
 }
+.quick-upload-cta {
+  min-height: 78px;
+  border: 0;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #7b1f35, #0f766e);
+  color: #fff;
+  font-size: 22px;
+  font-weight: 900;
+  box-shadow: 0 16px 34px rgba(76, 18, 34, .16);
+}
+.quick-upload {
+  max-width: 940px;
+}
+.quick-camera-panel,
+.quick-saved-panel {
+  display: grid;
+  place-items: center;
+  gap: 14px;
+  min-height: min(68vh, 620px);
+  text-align: center;
+}
+.quick-camera-panel h2,
+.quick-confirm-actions h2,
+.quick-data-panel h2,
+.quick-saved-panel h2 {
+  margin: 0;
+  color: var(--tdo-brand-dark);
+  font-size: 28px;
+}
+.quick-camera-panel p,
+.quick-data-panel p,
+.quick-saved-panel p {
+  max-width: 560px;
+  margin: 0;
+  color: #667085;
+  font-weight: 700;
+  line-height: 1.5;
+}
+.quick-camera-button {
+  display: inline-flex;
+  min-width: min(100%, 320px);
+  min-height: 68px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: 8px;
+  background: var(--tdo-brand);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 900;
+  cursor: pointer;
+}
+.quick-confirm-panel {
+  display: grid;
+  grid-template-columns: minmax(240px, 520px) minmax(240px, 1fr);
+  gap: 22px;
+  align-items: center;
+}
+.quick-preview {
+  display: grid;
+  place-items: center;
+  min-height: min(64vh, 640px);
+  overflow: hidden;
+  border-radius: 8px;
+  background: #f2f4f7;
+}
+.quick-preview img {
+  width: 100%;
+  height: 100%;
+  max-height: min(64vh, 640px);
+  object-fit: contain;
+}
+.quick-confirm-actions {
+  display: grid;
+  gap: 12px;
+}
+.quick-confirm-actions button,
+.quick-data-panel button,
+.quick-saved-panel button {
+  min-height: 58px;
+  font-size: 17px;
+}
+.quick-data-panel {
+  display: grid;
+  gap: 14px;
+}
 .deadline-picker {
   display: grid;
   gap: 12px;
@@ -601,6 +687,31 @@ figcaption { padding: 8px 2px 0; color: #667085; font-weight: 700; }
   gap: 14px;
   margin-bottom: 24px;
 }
+.share-section-toggle {
+  width: 100%;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+.share-section-toggle:hover {
+  border-color: #d6bbfb;
+  background: #fffbfa;
+}
+.share-section-status {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+  color: #667085;
+  font-size: 13px;
+  font-weight: 800;
+}
+.share-section-status strong {
+  color: #344054;
+  font-size: 15px;
+}
 .section-heading {
   display: flex;
   align-items: end;
@@ -670,15 +781,8 @@ figcaption { padding: 8px 2px 0; color: #667085; font-weight: 700; }
 }
 .share-grid {
   display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(280px, 320px);
-  gap: 16px;
-  overflow-x: auto;
-  padding-bottom: 8px;
-  scroll-snap-type: x proximity;
-}
-.share-grid .share-card {
-  scroll-snap-align: start;
+  grid-template-columns: repeat(auto-fill, minmax(max(118px, calc((100% - 108px) / 10)), 1fr));
+  gap: 12px;
 }
 .share-card {
   display: grid;
@@ -688,11 +792,73 @@ figcaption { padding: 8px 2px 0; color: #667085; font-weight: 700; }
   border-radius: 8px;
   background: #fff;
 }
+.share-card-open {
+  grid-column: span 3;
+  box-shadow: 0 14px 32px rgba(76, 18, 34, .12);
+}
+.share-card-trigger {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.share-card-caption {
+  display: grid;
+  gap: 2px;
+  padding: 0 10px 10px;
+  min-height: 50px;
+}
+.share-card-caption strong {
+  color: #344054;
+  font-size: 14px;
+}
+.share-card-caption span {
+  overflow: hidden;
+  color: #667085;
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.share-card-open .share-card-caption {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  min-height: auto;
+  padding: 0 14px 12px;
+}
+.share-card-open .share-card-caption strong {
+  font-size: 18px;
+}
+.share-card-open .share-card-caption span {
+  font-size: 15px;
+}
+.share-card-open .publish-panel {
+  gap: 14px;
+  padding: 16px;
+}
+.share-card-open .publish-panel h2 {
+  font-size: 24px;
+}
+.share-card-open .publish-panel dl {
+  grid-template-columns: minmax(110px, auto) minmax(0, 1fr);
+  gap: 8px 14px;
+}
+.share-card-open .big-action-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.share-card-open .big-action-grid button {
+  min-height: 52px;
+  font-size: 15px;
+}
 .share-image-slot {
   display: grid;
   width: 100%;
   aspect-ratio: 4 / 5;
-  max-height: 460px;
   overflow: hidden;
   background: #f2f4f7;
 }
@@ -715,19 +881,20 @@ figcaption { padding: 8px 2px 0; color: #667085; font-weight: 700; }
 .pending-ban {
   display: grid;
   place-items: center;
-  width: 58px;
-  min-height: 58px;
+  width: 44px;
+  min-height: 44px;
   border: 2px solid #d92d20;
   border-radius: 999px;
   color: #d92d20;
   background: #fff;
 }
 .share-ai-pending strong {
-  font-size: 18px;
+  font-size: 14px;
 }
 .share-ai-pending small {
   max-width: 220px;
   color: #9a3412;
+  font-size: 11px;
   line-height: 1.45;
 }
 .big-action-grid {
@@ -1563,6 +1730,24 @@ tr:last-child td {
   .pwa-install-panel button {
     width: 100%;
   }
+  .quick-upload-cta {
+    min-height: 72px;
+    width: 100%;
+    font-size: 20px;
+  }
+  .quick-confirm-panel {
+    grid-template-columns: 1fr;
+  }
+  .quick-camera-panel,
+  .quick-saved-panel {
+    min-height: calc(100vh - 210px);
+  }
+  .quick-preview {
+    min-height: 48vh;
+  }
+  .quick-preview img {
+    max-height: 58vh;
+  }
   .button-row > * { flex: 1 1 150px; }
   .store-topbar { align-items: stretch; flex-direction: column; padding: 12px 14px; }
   .store-brand-lockup { align-items: flex-start; }
@@ -1651,6 +1836,15 @@ tr:last-child td {
   .compact-toolbar .secondary { width: 100%; }
   .share-image-slot { min-height: 260px; }
   .big-action-grid { grid-template-columns: 1fr; }
+  .share-card-open {
+    grid-column: 1 / -1;
+  }
+  .share-card-open .big-action-grid {
+    grid-template-columns: 1fr;
+  }
+  .share-card-open .publish-panel dl {
+    grid-template-columns: 1fr;
+  }
   .bulk-action-panel {
     grid-template-columns: 1fr;
     align-items: stretch;

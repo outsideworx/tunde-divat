@@ -87,6 +87,7 @@ function ShareSection({ title, hint, products, variant, busyId, onDownload, onWe
   onDeleted: () => void;
 }) {
   const [visibleCount, setVisibleCount] = useState(25);
+  const [open, setOpen] = useState(true);
   const visibleProducts = products.slice(0, visibleCount);
   const remaining = Math.max(0, products.length - visibleCount);
 
@@ -95,33 +96,40 @@ function ShareSection({ title, hint, products, variant, busyId, onDownload, onWe
   }, [products.length, variant]);
 
   return (
-    <section className="share-section">
-      <div className="section-heading">
+    <section className={`share-section ${open ? "share-section-open" : "share-section-closed"}`}>
+      <button className="section-heading share-section-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <div>
           <h2>{title}</h2>
           <p>{hint}</p>
         </div>
-        <strong>{products.length} tétel</strong>
-      </div>
-      <div className="share-grid">
-        {visibleProducts.map((product) => (
-          <ShareCard
-            product={product}
-            variant={variant}
-            busy={busyId === product.id}
-            onDownload={() => onDownload(product, variant)}
-            onWebsite={() => onWebsite(product)}
-            onDeleted={onDeleted}
-            key={product.id}
-          />
-        ))}
-      </div>
-      {remaining > 0 && (
-        <button className="secondary load-more-button" onClick={() => setVisibleCount((count) => count + 25)}>
-          További {Math.min(25, remaining)} megnyitása
-        </button>
+        <span className="share-section-status">
+          <strong>{products.length} tétel</strong>
+          <span>{open ? "Becsukás" : "Kinyitás"}</span>
+        </span>
+      </button>
+      {open && (
+        <>
+          <div className="share-grid">
+            {visibleProducts.map((product) => (
+              <ShareCard
+                product={product}
+                variant={variant}
+                busy={busyId === product.id}
+                onDownload={() => onDownload(product, variant)}
+                onWebsite={() => onWebsite(product)}
+                onDeleted={onDeleted}
+                key={product.id}
+              />
+            ))}
+          </div>
+          {remaining > 0 && (
+            <button className="secondary load-more-button" onClick={() => setVisibleCount((count) => count + 25)}>
+              További {Math.min(25, remaining)} megnyitása
+            </button>
+          )}
+          {products.length === 0 && <EmptyState title="Ebben a csoportban most nincs megosztható kép" />}
+        </>
       )}
-      {products.length === 0 && <EmptyState title="Ebben a csoportban most nincs megosztható kép" />}
     </section>
   );
 }
@@ -131,13 +139,15 @@ function ShareCard({ product, variant, busy, onDownload, onWebsite, onDeleted }:
   const url = imageUrl(image);
   const waitingForAi = variant === "generated" && !image;
   const [editing, setEditing] = useState(false);
+  const [open, setOpen] = useState(false);
   async function remove() {
     if (await deleteProduct(product)) onDeleted();
   }
 
   return (
-    <article className="share-card">
-      <div className="share-image-slot">
+    <article className={`share-card ${open ? "share-card-open" : ""}`}>
+      <button className="share-card-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+        <div className="share-image-slot">
         {image ? (
           <img src={url} alt={`Megosztható termék ${product.displayNumber}`} />
         ) : (
@@ -147,8 +157,13 @@ function ShareCard({ product, variant, busy, onDownload, onWebsite, onDeleted }:
             <small>Az eredeti kép megmaradt, az AI-verzió még nem készült el.</small>
           </div>
         )}
-      </div>
-      <div className="publish-panel">
+        </div>
+        <span className="share-card-caption">
+          <strong>#{product.displayNumber}</strong>
+          <span>{product.productName || product.productId}</span>
+        </span>
+      </button>
+      {open && <div className="publish-panel">
         <h2>#{product.displayNumber}</h2>
         <span className="status-note">{variant === "raw" ? `Nyers kép: termek_${product.displayNumber}_nyers` : waitingForAi ? "AI-verzió még nincs kész" : "AI-generált kép"}</span>
         <dl>
@@ -165,7 +180,7 @@ function ShareCard({ product, variant, busy, onDownload, onWebsite, onDeleted }:
           <button className="danger icon-text" disabled={busy} onClick={remove}><Trash2 size={20} /> Törlés</button>
         </div>
         {editing && <ProductEditForm product={product} onSaved={() => { setEditing(false); onDeleted(); }} />}
-      </div>
+      </div>}
     </article>
   );
 }

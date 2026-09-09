@@ -70,7 +70,7 @@ type RegisteredUserForm = {
   is_active: boolean;
 };
 type Step = "photo" | "data" | "saved";
-type View = "dashboard" | "storefront" | "new" | "ai" | "share" | "current" | "orders" | "pickup" | "deleted";
+type View = "dashboard" | "storefront" | "quick" | "new" | "ai" | "share" | "current" | "orders" | "pickup" | "deleted";
 type AdminView = View | "users";
 type AuthMode = "login" | "register";
 type StoreView = "catalog" | "reservations" | "favorites";
@@ -464,7 +464,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
 
   return (
     <main className="auth-shell">
-      <span className="build-version">ver.: 1.01</span>
+      <span className="build-version">ver.: 1.02</span>
       <section className="brand-panel">
         <span className="sr-only">Tünde Divat Online</span>
       </section>
@@ -1041,6 +1041,7 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [view, setView] = useState<AdminView>("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const adminViewOrder: { id: AdminView; label: string }[] = [
+    { id: "quick", label: "Gyors feltöltés" },
     { id: "new", label: "1. Új termék" },
     { id: "ai", label: "2. AI-generálás" },
     { id: "share", label: "3. Megosztás" },
@@ -1081,6 +1082,7 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
         </div>
         <nav>
           <button onClick={() => setView("dashboard")} className={view === "dashboard" ? "active" : ""}>Dashboard</button>
+          <button onClick={() => setView("quick")} className={view === "quick" ? "active" : ""}>Gyors feltöltés</button>
           <button onClick={() => setView("new")} className={view === "new" ? "active" : ""}>1. Új termék</button>
           <button onClick={() => setView("ai")} className={view === "ai" ? "active" : ""}>2. AI-generálás</button>
           <button onClick={() => setView("share")} className={view === "share" ? "active" : ""}>3. Megosztás</button>
@@ -1110,7 +1112,8 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
             <ArrowLeft size={18} /> Vissza a főmenübe
           </button>
         )}
-        {view === "dashboard" && <Dashboard onNew={() => setView("new")} onStorefront={() => setView("storefront")} onAi={() => setView("ai")} onShare={() => setView("share")} onCurrent={() => setView("current")} onOrders={() => setView("orders")} onPickup={() => setView("pickup")} />}
+        {view === "dashboard" && <Dashboard onQuick={() => setView("quick")} onNew={() => setView("new")} onStorefront={() => setView("storefront")} onAi={() => setView("ai")} onShare={() => setView("share")} onCurrent={() => setView("current")} onOrders={() => setView("orders")} onPickup={() => setView("pickup")} />}
+        {view === "quick" && <QuickUpload onDone={() => setView("share")} onAi={() => setView("ai")} />}
         {view === "new" && <ProductWizard onDone={() => setView("ai")} />}
         {view === "ai" && <AiGenerationQueue onShare={() => setView("share")} />}
         {view === "share" && <ShareCenter />}
@@ -1179,7 +1182,7 @@ function PwaInstallPanel() {
   );
 }
 
-function Dashboard({ onNew, onStorefront, onAi, onShare, onCurrent, onOrders, onPickup }: { onNew: () => void; onStorefront: () => void; onAi: () => void; onShare: () => void; onCurrent: () => void; onOrders: () => void; onPickup: () => void }) {
+function Dashboard({ onQuick, onNew, onStorefront, onAi, onShare, onCurrent, onOrders, onPickup }: { onQuick: () => void; onNew: () => void; onStorefront: () => void; onAi: () => void; onShare: () => void; onCurrent: () => void; onOrders: () => void; onPickup: () => void }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
@@ -1219,6 +1222,7 @@ function Dashboard({ onNew, onStorefront, onAi, onShare, onCurrent, onOrders, on
         <h1>Dashboard</h1>
       </header>
       <div className="dashboard-actions">
+        <button className="quick-upload-cta icon-text" onClick={onQuick}><Camera size={30} /> Gyors feltöltés</button>
         <button className="new-product-cta primary icon-text" onClick={onNew}><Plus size={30} /> 1. Új termék</button>
         <button className="storefront-cta secondary icon-text" onClick={onStorefront}><Eye size={26} /> Felhasználói nézet</button>
       </div>
@@ -1291,6 +1295,162 @@ function productFormError(form: {
   });
   if (invalidQuantity) return `${invalidQuantity} méretnél a maximum darabszám 0 vagy annál nagyobb egész szám legyen.`;
   return "";
+}
+
+function QuickUpload({ onDone, onAi }: { onDone: () => void; onAi: () => void }) {
+  const inputId = "quick-camera-input";
+  const [step, setStep] = useState<"camera" | "confirm" | "data" | "saved">("camera");
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState("");
+  const [savedProduct, setSavedProduct] = useState<Product | null>(null);
+  const [form, setForm] = useState({
+    product_name: "",
+    price: "",
+    available_sizes: [] as string[]
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (step !== "camera") return;
+    const input = document.getElementById(inputId) as HTMLInputElement | null;
+    window.setTimeout(() => input?.click(), 120);
+  }, [step]);
+
+  function resetCamera() {
+    if (preview) URL.revokeObjectURL(preview);
+    setFile(null);
+    setPreview("");
+    setError("");
+    setStep("camera");
+  }
+
+  function pick(next: File | null) {
+    if (!next) return;
+    if (preview) URL.revokeObjectURL(preview);
+    setFile(next);
+    setPreview(URL.createObjectURL(next));
+    setError("");
+    setStep("confirm");
+  }
+
+  async function saveQuickProduct(event: React.FormEvent) {
+    event.preventDefault();
+    if (!file) return setError("Készíts vagy válassz egy fotót a gyors feltöltéshez.");
+    if (!form.product_name.trim()) return setError("Add meg a termék nevét.");
+    const validationError = productFormError({
+      price: form.price,
+      available_sizes: form.available_sizes,
+      size_quantities: {}
+    });
+    if (validationError) return setError(validationError);
+    setBusy(true);
+    setError("");
+    try {
+      const created = await api<{ product: Product }>("/api/products", {
+        method: "POST",
+        body: JSON.stringify({
+          product_id: null,
+          product_name: form.product_name.trim(),
+          price: Number(form.price),
+          available_sizes: form.available_sizes,
+          size_quantities: {},
+          category: null,
+          description: null,
+          reservable_until: null,
+          reservable_duration_hours: 12
+        })
+      });
+      const fd = new FormData();
+      fd.append("image", file);
+      const uploaded = await api<{ product: Product }>(`/api/products/${created.product.id}/image`, {
+        method: "POST",
+        body: fd
+      });
+      setSavedProduct(uploaded.product);
+      setStep("saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "A gyors feltöltés sikertelen.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="wizard quick-upload">
+      <header className="topbar">
+        <h1>Gyors feltöltés</h1>
+      </header>
+      {error && <p className="error">{error}</p>}
+      <input
+        id={inputId}
+        hidden
+        type="file"
+        accept="image/*,.heic,.heif"
+        capture="environment"
+        onClick={(event) => { event.currentTarget.value = ""; }}
+        onChange={(event) => pick(event.target.files?.[0] ?? null)}
+      />
+      {step === "camera" && (
+        <section className="panel quick-camera-panel">
+          <Camera size={48} />
+          <h2>Kamera megnyitása</h2>
+          <p>Ha a kamera nem nyílt meg automatikusan, indítsd el innen. PWA nézetben ez a telefon kameráját fogja használni.</p>
+          <label className="quick-camera-button icon-text" htmlFor={inputId}>
+            <Camera size={24} /> Fotó készítése
+          </label>
+        </section>
+      )}
+      {step === "confirm" && (
+        <section className="panel quick-confirm-panel">
+          <div className="quick-preview">
+            <img src={preview} alt="Gyors feltöltés előnézet" />
+          </div>
+          <div className="quick-confirm-actions">
+            <h2>Kép megtartása?</h2>
+            <button className="primary icon-text" onClick={() => setStep("data")}>
+              <Upload size={20} /> Igen, megtartom
+            </button>
+            <button className="secondary icon-text" onClick={resetCamera}>
+              <Camera size={20} /> Nem, új fotó
+            </button>
+          </div>
+        </section>
+      )}
+      {step === "data" && (
+        <form className="panel quick-data-panel" onSubmit={saveQuickProduct}>
+          <div>
+            <h2>Gyors adatok</h2>
+            <p>Leírás nélkül mentjük. A foglalási határidő automatikusan +12 óra lesz a honlapra megosztástól számítva.</p>
+          </div>
+          <Text label="Termék megnevezése" value={form.product_name} onChange={(product_name) => setForm({ ...form, product_name })} />
+          <Text label="Ár (Ft)" type="number" value={form.price} onChange={(price) => setForm({ ...form, price })} />
+          <SizePicker value={form.available_sizes} onChange={(available_sizes) => setForm({ ...form, available_sizes })} />
+          <div className="button-row wide">
+            <button className="secondary" type="button" onClick={() => setStep("confirm")}>Vissza a képhez</button>
+            <button className="primary" disabled={busy} type="submit">{busy ? "Mentés..." : "Mentés megosztásba"}</button>
+          </div>
+        </form>
+      )}
+      {step === "saved" && savedProduct && (
+        <section className="panel quick-saved-panel">
+          <FolderCheck size={44} />
+          <h2>Gyors feltöltés mentve</h2>
+          <p>Az eredeti kép bekerült a Megosztás AI nélküli képei közé, és AI-generálásra is várakozik.</p>
+          <dl>
+            <dt>Termék</dt><dd>{savedProduct.productName}</dd>
+            <dt>Product ID</dt><dd>{savedProduct.productId}</dd>
+            <dt>Határidő</dt><dd>+12 óra a honlapra megosztástól</dd>
+          </dl>
+          <div className="button-row">
+            <button className="secondary" onClick={resetCamera}>Új gyors feltöltés</button>
+            <button className="secondary" onClick={onAi}>AI-generálás</button>
+            <button className="primary" onClick={onDone}>Megosztás megnyitása</button>
+          </div>
+        </section>
+      )}
+    </section>
+  );
 }
 
 function ProductWizard({ onDone }: { onDone: () => void }) {
@@ -1753,6 +1913,7 @@ function ShareSection({ title, hint, products, variant, busyId, onDownload, onWe
   onDeleted: () => void;
 }) {
   const [visibleCount, setVisibleCount] = useState(25);
+  const [open, setOpen] = useState(true);
   const visibleProducts = products.slice(0, visibleCount);
   const remaining = Math.max(0, products.length - visibleCount);
 
@@ -1761,33 +1922,40 @@ function ShareSection({ title, hint, products, variant, busyId, onDownload, onWe
   }, [products.length, variant]);
 
   return (
-    <section className="share-section">
-      <div className="section-heading">
+    <section className={`share-section ${open ? "share-section-open" : "share-section-closed"}`}>
+      <button className="section-heading share-section-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <div>
           <h2>{title}</h2>
           <p>{hint}</p>
         </div>
-        <strong>{products.length} tétel</strong>
-      </div>
-      <div className="share-grid">
-        {visibleProducts.map((product) => (
-          <ShareCard
-            product={product}
-            variant={variant}
-            busy={busyId === product.id}
-            onDownload={() => onDownload(product, variant)}
-            onWebsite={() => onWebsite(product)}
-            onDeleted={onDeleted}
-            key={product.id}
-          />
-        ))}
-      </div>
-      {remaining > 0 && (
-        <button className="secondary load-more-button" onClick={() => setVisibleCount((count) => count + 25)}>
-          További {Math.min(25, remaining)} megnyitása
-        </button>
+        <span className="share-section-status">
+          <strong>{products.length} tétel</strong>
+          <span>{open ? "Becsukás" : "Kinyitás"}</span>
+        </span>
+      </button>
+      {open && (
+        <>
+          <div className="share-grid">
+            {visibleProducts.map((product) => (
+              <ShareCard
+                product={product}
+                variant={variant}
+                busy={busyId === product.id}
+                onDownload={() => onDownload(product, variant)}
+                onWebsite={() => onWebsite(product)}
+                onDeleted={onDeleted}
+                key={product.id}
+              />
+            ))}
+          </div>
+          {remaining > 0 && (
+            <button className="secondary load-more-button" onClick={() => setVisibleCount((count) => count + 25)}>
+              További {Math.min(25, remaining)} megnyitása
+            </button>
+          )}
+          {products.length === 0 && <EmptyState title="Ebben a csoportban most nincs megosztható kép" />}
+        </>
       )}
-      {products.length === 0 && <EmptyState title="Ebben a csoportban most nincs megosztható kép" />}
     </section>
   );
 }
@@ -1797,13 +1965,15 @@ function ShareCard({ product, variant, busy, onDownload, onWebsite, onDeleted }:
   const url = imageUrl(image);
   const waitingForAi = variant === "generated" && !image;
   const [editing, setEditing] = useState(false);
+  const [open, setOpen] = useState(false);
   async function remove() {
     if (await deleteProduct(product)) onDeleted();
   }
 
   return (
-    <article className="share-card">
-      <div className="share-image-slot">
+    <article className={`share-card ${open ? "share-card-open" : ""}`}>
+      <button className="share-card-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+        <div className="share-image-slot">
         {image ? (
           <img src={url} alt={`Megosztható termék ${product.displayNumber}`} />
         ) : (
@@ -1813,8 +1983,13 @@ function ShareCard({ product, variant, busy, onDownload, onWebsite, onDeleted }:
             <small>Az eredeti kép megmaradt, az AI-verzió még nem készült el.</small>
           </div>
         )}
-      </div>
-      <div className="publish-panel">
+        </div>
+        <span className="share-card-caption">
+          <strong>#{product.displayNumber}</strong>
+          <span>{product.productName || product.productId}</span>
+        </span>
+      </button>
+      {open && <div className="publish-panel">
         <h2>#{product.displayNumber}</h2>
         <span className="status-note">{variant === "raw" ? `Nyers kép: termek_${product.displayNumber}_nyers` : waitingForAi ? "AI-verzió még nincs kész" : "AI-generált kép"}</span>
         <dl>
@@ -1831,7 +2006,7 @@ function ShareCard({ product, variant, busy, onDownload, onWebsite, onDeleted }:
           <button className="danger icon-text" disabled={busy} onClick={remove}><Trash2 size={20} /> Törlés</button>
         </div>
         {editing && <ProductEditForm product={product} onSaved={() => { setEditing(false); onDeleted(); }} />}
-      </div>
+      </div>}
     </article>
   );
 }
@@ -2425,7 +2600,7 @@ function Orders() {
     });
   }
 
-  function reservationsInExportRange() {
+  function filteredReservations() {
     if (exportFrom && exportTo && dateStart(exportFrom) > dateEnd(exportTo)) {
       return [];
     }
@@ -2467,7 +2642,7 @@ function Orders() {
       return;
     }
     setError("");
-    const exportReservations = sortReservationsForOrders(reservationsInExportRange());
+    const exportReservations = sortReservationsForOrders(filteredReservations());
     const exportProcurementGroups = procurementGroupsFor(exportReservations);
     const exportReservationsByUser = reservationsByUserFor(exportReservations);
     const dateLabel = exportFrom || exportTo ? `-${exportFrom || "kezdet"}-${exportTo || "vege"}` : "";
@@ -2510,10 +2685,12 @@ function Orders() {
     ]);
   }
 
-  const sortedReservations = sortReservationsForOrders(reservations);
+  const visibleReservations = filteredReservations();
+  const sortedReservations = sortReservationsForOrders(visibleReservations);
   const procurementGroups = procurementGroupsFor(sortedReservations);
   const reservationsByUser = reservationsByUserFor(sortedReservations);
-  const exportCount = reservationsInExportRange().length;
+  const filteredCount = visibleReservations.length;
+  const isDateRangeInvalid = !!exportFrom && !!exportTo && dateStart(exportFrom) > dateEnd(exportTo);
 
   return (
     <>
@@ -2525,8 +2702,8 @@ function Orders() {
       {message && <p className="success">{message}</p>}
       <section className="panel export-filter-panel">
         <div>
-          <h2>Export dátumszűrő</h2>
-          <p>A letöltés csak a megadott foglalási dátumtartomány rendeléseit tartalmazza.</p>
+          <h2>Dátumszűrő</h2>
+          <p>A felület és a letöltés is csak a megadott foglalási dátumtartomány rendeléseit mutatja.</p>
         </div>
         <label>
           Kezdő dátum
@@ -2537,7 +2714,7 @@ function Orders() {
           <input type="date" value={exportTo} onChange={(event) => setExportTo(event.target.value)} />
         </label>
         <div className="export-filter-actions">
-          <strong>{exportCount} foglalás kerül az exportba</strong>
+          <strong>{isDateRangeInvalid ? "Hibás dátumtartomány" : `${filteredCount} foglalás látható`}</strong>
           <button className="secondary" onClick={() => { setExportFrom(""); setExportTo(""); }}>Szűrő törlése</button>
         </div>
       </section>

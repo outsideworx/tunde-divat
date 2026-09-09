@@ -5,6 +5,7 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import { env, isProduction } from "./config/env.js";
+import { logger } from "./utils/securityLog.js";
 import { authRoutes } from "./routes/authRoutes.js";
 import { productRoutes } from "./routes/productRoutes.js";
 import { imageRoutes } from "./routes/imageRoutes.js";
@@ -55,6 +56,21 @@ export function createApp() {
   );
   app.use(express.json({ limit: "1mb" }));
   app.use(cookieParser());
+
+  app.use((req, res, next) => {
+    const start = Date.now();
+    res.on("finish", () => {
+      if (req.path === "/api/health") return;
+      logger.info("request", {
+        method: req.method,
+        path: req.path,
+        status: res.statusCode,
+        ms: Date.now() - start,
+        userId: (req as Express.Request).user?.id
+      });
+    });
+    next();
+  });
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
   app.use("/api/auth", authRoutes);

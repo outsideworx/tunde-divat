@@ -5,6 +5,7 @@ import { env } from "../config/env.js";
 import { requireAdmin, requireAuth } from "../middleware/auth.js";
 import { generationLimiter, uploadLimiter } from "../middleware/rateLimiters.js";
 import { asyncHandler } from "../utils/errors.js";
+import { logger } from "../utils/securityLog.js";
 import { ProductService } from "../services/productService.js";
 import { validateImageUpload } from "../services/uploadValidation.js";
 
@@ -52,7 +53,11 @@ productRoutes.patch(
 productRoutes.get(
   "/:id",
   asyncHandler(async (req, res) => {
-    res.json({ product: await products.get(Number(req.params.id)) });
+    const product = await products.get(Number(req.params.id));
+    if (req.user!.role !== "ADMIN") {
+      logger.info("product_view", { productId: product.id, userId: req.user!.id, ip: req.ip });
+    }
+    res.json({ product });
   })
 );
 

@@ -27,8 +27,13 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     ...options
   });
   if (!response.ok) {
-    const body = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(body.error ?? "Request failed");
+    const contentType = response.headers.get("Content-Type") ?? "";
+    if (contentType.includes("application/json")) {
+      const body = await response.json().catch(() => ({ error: "" }));
+      throw new Error(body.error ?? `A kérés sikertelen (${response.status}).`);
+    }
+    const text = await response.text().catch(() => "");
+    throw new Error(text.trim() || `A kérés sikertelen (${response.status}).`);
   }
   return response.json();
 }

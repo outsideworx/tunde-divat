@@ -1,4 +1,4 @@
-import type { ProductPayload } from "@fashion-mvp/shared";
+import type { BulkReservationDeadlinePayload, ProductPayload } from "@fashion-mvp/shared";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../db/prisma.js";
 import { AppError } from "../utils/errors.js";
@@ -124,6 +124,18 @@ export class ProductService {
       return this.regenerateOverlay(id);
     }
     return product;
+  }
+
+  async updateApprovedReservationDeadline(payload: BulkReservationDeadlinePayload) {
+    const result = await prisma.product.updateMany({
+      where: { status: "APPROVED" },
+      data: {
+        reservableUntil: payload.reservable_until,
+        reservableDurationHours: null
+      }
+    });
+    const products = await this.list("APPROVED");
+    return { count: result.count, products };
   }
 
   async addOriginalImage(id: number, file: Express.Multer.File, metadata: { width?: number; height?: number }) {

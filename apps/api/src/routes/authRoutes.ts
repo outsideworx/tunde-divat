@@ -22,7 +22,7 @@ authRoutes.post(
     const user = await prisma.user.findUnique({ where: { username: payload.username } });
     if (!user || !user.isActive || !(await argon2.verify(user.passwordHash, payload.password))) {
       logger.warn("login", { outcome: "failure", username: payload.username, ip: req.ip });
-      throw new AppError(401, "Invalid username or password");
+      throw new AppError(401, "Hibás felhasználónév vagy jelszó.");
     }
     const authUser = authUserFrom(user);
     setSessionCookie(res, signSession(authUser));

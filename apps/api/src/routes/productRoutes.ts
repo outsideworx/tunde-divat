@@ -1,6 +1,6 @@
 import { Router } from "express";
 import multer from "multer";
-import { generationPayloadSchema, productPayloadSchema } from "@fashion-mvp/shared";
+import { bulkReservationDeadlinePayloadSchema, generationPayloadSchema, productPayloadSchema } from "@fashion-mvp/shared";
 import { env } from "../config/env.js";
 import { requireAdmin, requireAuth } from "../middleware/auth.js";
 import { generationLimiter, uploadLimiter } from "../middleware/rateLimiters.js";
@@ -37,6 +37,15 @@ productRoutes.post(
   asyncHandler(async (req, res) => {
     const payload = productPayloadSchema.parse(req.body);
     res.status(201).json({ product: await products.create(payload, req.user!.id) });
+  })
+);
+
+productRoutes.patch(
+  "/bulk/reservation-deadline",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const payload = bulkReservationDeadlinePayloadSchema.parse(req.body);
+    res.json(await products.updateApprovedReservationDeadline(payload));
   })
 );
 

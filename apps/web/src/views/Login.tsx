@@ -14,13 +14,26 @@ export function Login({ onLogin }: { onLogin: (user: User) => void }) {
     first_name: "",
     phone: "",
     password: "",
-    invite_code: ""
+    invite_code: "",
+    privacy_accepted: false
   });
   const [error, setError] = useState("");
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setError("");
+    if (authMode === "login") {
+      if (!username.trim()) return setError("Add meg a felhasználónevet.");
+      if (!password) return setError("Add meg a jelszót.");
+    } else {
+      if (!registerForm.username.trim()) return setError("Add meg a felhasználónevet.");
+      if (!registerForm.last_name.trim()) return setError("Add meg a vezetéknevet.");
+      if (!registerForm.first_name.trim()) return setError("Add meg a keresztnevet.");
+      if (!registerForm.phone.trim()) return setError("Add meg a telefonszámot.");
+      if (!registerForm.password) return setError("Add meg a jelszót.");
+      if (!registerForm.invite_code.trim()) return setError("Add meg a meghívókódot.");
+      if (!registerForm.privacy_accepted) return setError("Az adatkezelési tájékoztató elfogadása kötelező.");
+    }
     try {
       const res = await api<{ user: User }>(authMode === "login" ? "/api/auth/login" : "/api/auth/register", {
         method: "POST",
@@ -41,7 +54,7 @@ export function Login({ onLogin }: { onLogin: (user: User) => void }) {
     }
   }
 
-  function setRegister<K extends keyof typeof registerForm>(key: K, value: string) {
+  function setRegister<K extends keyof typeof registerForm>(key: K, value: (typeof registerForm)[K]) {
     setRegisterForm((current) => ({ ...current, [key]: value }));
   }
 
@@ -55,7 +68,7 @@ export function Login({ onLogin }: { onLogin: (user: User) => void }) {
 
   return (
     <main className="auth-shell">
-      <span className="build-version">ver.: 0.1</span>
+      <span className="build-version">ver.: 1.01</span>
       <section className="brand-panel">
         <div />
         <div>
@@ -104,6 +117,12 @@ export function Login({ onLogin }: { onLogin: (user: User) => void }) {
               <label>Telefonszám<input value={registerForm.phone} onChange={(e) => setRegister("phone", e.target.value)} type="tel" autoComplete="tel" /></label>
               <label>Jelszó<input value={registerForm.password} onChange={(e) => setRegister("password", e.target.value)} type="password" autoComplete="new-password" /></label>
               <label>Meghívókód<input value={registerForm.invite_code} onChange={(e) => setRegister("invite_code", e.target.value)} type="text" /></label>
+              <label className="check-row privacy-consent">
+                <input checked={registerForm.privacy_accepted} onChange={(e) => setRegister("privacy_accepted", e.target.checked)} type="checkbox" />
+                <span>
+                  Elolvastam és elfogadom az <a href="/adatkezelesi-tajekoztato" target="_blank" rel="noreferrer">adatkezelési tájékoztatót</a>.
+                </span>
+              </label>
             </>
           )}
           {error && <p className="error">{error}</p>}

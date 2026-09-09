@@ -36,14 +36,14 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction) {
   const token = req.cookies?.session;
   if (!token) {
     securityLog("unauthorized_access", { path: req.path, reason: "missing_session" });
-    return next(new AppError(401, "Authentication required"));
+    return next(new AppError(401, "Bejelentkezés szükséges. Kérlek jelentkezz be újra."));
   }
   try {
     req.user = jwt.verify(token, env.SESSION_SECRET, { algorithms: ["HS256"] }) as AuthUser;
     return next();
   } catch {
     securityLog("unauthorized_access", { path: req.path, reason: "invalid_session" });
-    return next(new AppError(401, "Authentication required"));
+    return next(new AppError(401, "A bejelentkezés lejárt. Kérlek jelentkezz be újra."));
   }
 }
 

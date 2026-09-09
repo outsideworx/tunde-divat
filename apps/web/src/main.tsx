@@ -106,8 +106,13 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
     ...options
   });
   if (!response.ok) {
-    const body = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(body.error ?? "Request failed");
+    const contentType = response.headers.get("Content-Type") ?? "";
+    if (contentType.includes("application/json")) {
+      const body = await response.json().catch(() => ({ error: "" }));
+      throw new Error(body.error ?? `A kérés sikertelen (${response.status}).`);
+    }
+    const text = await response.text().catch(() => "");
+    throw new Error(text.trim() || `A kérés sikertelen (${response.status}).`);
   }
   return response.json();
 }
@@ -413,6 +418,18 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setError("");
+    if (authMode === "login") {
+      if (!username.trim()) return setError("Add meg a felhasználónevet.");
+      if (!password) return setError("Add meg a jelszót.");
+    } else {
+      if (!registerForm.username.trim()) return setError("Add meg a felhasználónevet.");
+      if (!registerForm.last_name.trim()) return setError("Add meg a vezetéknevet.");
+      if (!registerForm.first_name.trim()) return setError("Add meg a keresztnevet.");
+      if (!registerForm.phone.trim()) return setError("Add meg a telefonszámot.");
+      if (!registerForm.password) return setError("Add meg a jelszót.");
+      if (!registerForm.invite_code.trim()) return setError("Add meg a meghívókódot.");
+      if (!registerForm.privacy_accepted) return setError("Az adatkezelési tájékoztató elfogadása kötelező.");
+    }
     try {
       const res = await api<{ user: User }>(authMode === "login" ? "/api/auth/login" : "/api/auth/register", {
         method: "POST",
@@ -447,7 +464,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
 
   return (
     <main className="auth-shell">
-      <span className="build-version">ver.: 0.1</span>
+      <span className="build-version">ver.: 1.01</span>
       <section className="brand-panel">
         <span className="sr-only">Tünde Divat Online</span>
       </section>
@@ -1257,6 +1274,25 @@ function sizeQuantityPayload(sizes: string[], quantities: Record<string, string>
   );
 }
 
+function productFormError(form: {
+  price: string;
+  available_sizes: string[];
+  size_quantities: Record<string, string>;
+}) {
+  if (!form.price.trim()) return "Az ár megadása kötelező.";
+  const price = Number(form.price);
+  if (!Number.isFinite(price) || price <= 0) return "Az ár nullánál nagyobb szám legyen.";
+  if (!form.available_sizes.length) return "Legalább egy méretet válassz ki.";
+  const invalidQuantity = form.available_sizes.find((size) => {
+    const value = form.size_quantities[size]?.trim();
+    if (!value) return false;
+    const quantity = Number(value);
+    return !Number.isInteger(quantity) || quantity < 0;
+  });
+  if (invalidQuantity) return `${invalidQuantity} méretnél a maximum darabszám 0 vagy annál nagyobb egész szám legyen.`;
+  return "";
+}
+
 function ProductWizard({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState<Step>("photo");
   const [file, setFile] = useState<File | null>(null);
@@ -1283,6 +1319,8 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
   }
 
   async function createAndUpload() {
+    const validationError = productFormError(form);
+    if (validationError) return setError(validationError);
     setBusy(true);
     setError("");
     try {
@@ -1815,6 +1853,8 @@ function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () =
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
+    const validationError = productFormError(form);
+    if (validationError) return setError(validationError);
     setBusy(true);
     setError("");
     try {
@@ -1897,6 +1937,10 @@ function CurrentOfferings() {
   const [products, setProducts] = useState<Product[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [bulkDeadline, setBulkDeadline] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState("");
+  const [bulkError, setBulkError] = useState("");
   async function load() {
     const [productRes, reservationRes] = await Promise.all([
       api<{ products: Product[] }>("/api/products?status=APPROVED"),
@@ -1915,9 +1959,49 @@ function CurrentOfferings() {
     const image = productDisplayImage(product);
     if (image) await downloadProductImage(product, image, productGeneratedImage(product) ? "generated" : "raw");
   }
+  async function updateAllDeadlines(event: React.FormEvent) {
+    event.preventDefault();
+    setBulkMessage("");
+    setBulkError("");
+    if (!bulkDeadline) {
+      setBulkError("Adj meg egy új foglalási határidőt.");
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const res = await api<{ count: number; products: Product[] }>("/api/products/bulk/reservation-deadline", {
+        method: "PATCH",
+        body: JSON.stringify({ reservable_until: new Date(bulkDeadline).toISOString() })
+      });
+      setProducts(res.products.filter((product) => productDisplayImage(product)));
+      setBulkMessage(`${res.count} élő termék foglalási határideje frissült.`);
+      setBulkDeadline("");
+    } catch (err) {
+      setBulkError(err instanceof Error ? err.message : "A tömeges határidő módosítása sikertelen.");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
   return (
     <>
       <header className="topbar"><h1>Jelenlegi kínálat</h1></header>
+      <section className="panel bulk-deadline-panel">
+        <div>
+          <h2>Foglalási határidő tömeges módosítása</h2>
+          <p>Az itt megadott időpont felülírja az összes jelenleg élő termék korábbi foglalási határidejét.</p>
+        </div>
+        <form className="bulk-deadline-form" onSubmit={updateAllDeadlines}>
+          <label>
+            Új foglalási határidő
+            <input type="datetime-local" value={bulkDeadline} onChange={(event) => setBulkDeadline(event.target.value)} />
+          </label>
+          <button className="primary" disabled={bulkBusy || products.length === 0} type="submit">
+            {bulkBusy ? "Frissítés..." : "Összes élő termék frissítése"}
+          </button>
+        </form>
+        {bulkError && <p className="error">{bulkError}</p>}
+        {bulkMessage && <p className="success">{bulkMessage}</p>}
+      </section>
       <section className="panel">
         <div className="table-wrap">
           <table>
@@ -2067,6 +2151,7 @@ function DeletedProducts() {
 function RegisteredUsers() {
   const [users, setUsers] = useState<RegisteredUser[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [openActionsId, setOpenActionsId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<RegisteredUserForm | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [error, setError] = useState("");
@@ -2083,6 +2168,7 @@ function RegisteredUsers() {
 
   function startEdit(user: RegisteredUser) {
     setEditingId(user.id);
+    setOpenActionsId(user.id);
     setEditForm({
       username: user.username,
       last_name: user.lastName ?? "",
@@ -2111,6 +2197,7 @@ function RegisteredUsers() {
         body: JSON.stringify(editForm)
       });
       setEditingId(null);
+      setOpenActionsId(null);
       setEditForm(null);
       setMessage("A felhasználó adatai frissültek.");
       await load();
@@ -2179,6 +2266,7 @@ function RegisteredUsers() {
           <table>
             <thead>
               <tr>
+                <th>Sorszám</th>
                 <th>Felhasználónév</th>
                 <th>Vezetéknév</th>
                 <th>Keresztnév</th>
@@ -2192,10 +2280,12 @@ function RegisteredUsers() {
               </tr>
             </thead>
             <tbody>
-              {users.length ? users.map((registeredUser) => {
+              {users.length ? users.map((registeredUser, index) => {
                 const isEditing = editingId === registeredUser.id && editForm;
+                const isOpen = openActionsId === registeredUser.id;
                 return (
-                  <tr key={registeredUser.id}>
+                  <tr key={registeredUser.id} className={isOpen ? "user-row-open" : ""}>
+                    <td><strong>{users.length - index}.</strong></td>
                     <td>{isEditing ? <input value={editForm.username} onChange={(e) => updateEdit("username", e.target.value)} /> : registeredUser.username}</td>
                     <td>{isEditing ? <input value={editForm.last_name} onChange={(e) => updateEdit("last_name", e.target.value)} /> : registeredUser.lastName || "-"}</td>
                     <td>{isEditing ? <input value={editForm.first_name} onChange={(e) => updateEdit("first_name", e.target.value)} /> : registeredUser.firstName || "-"}</td>
@@ -2219,11 +2309,19 @@ function RegisteredUsers() {
                     <td>{registeredUser.privacyAcceptedAt ? formatDateTime(registeredUser.privacyAcceptedAt) : "-"}</td>
                     <td>{formatDateTime(registeredUser.createdAt)}</td>
                     <td>
-                      <div className="table-actions stacked-actions">
+                      <div className="user-action-menu">
+                        <button
+                          className="secondary table-action-btn"
+                          disabled={busyId === registeredUser.id}
+                          onClick={() => setOpenActionsId((current) => current === registeredUser.id ? null : registeredUser.id)}
+                        >
+                          {isOpen ? "Műveletek bezárása" : "Műveletek"}
+                        </button>
+                        {isOpen && <div className="table-actions user-actions-expanded">
                         {isEditing ? (
                           <>
                             <button className="primary table-action-btn" disabled={busyId === registeredUser.id} onClick={() => saveUser(registeredUser)}>Mentés</button>
-                            <button className="secondary table-action-btn" disabled={busyId === registeredUser.id} onClick={() => { setEditingId(null); setEditForm(null); }}>Mégse</button>
+                            <button className="secondary table-action-btn" disabled={busyId === registeredUser.id} onClick={() => { setEditingId(null); setOpenActionsId(null); setEditForm(null); }}>Mégse</button>
                           </>
                         ) : (
                           <>
@@ -2234,12 +2332,13 @@ function RegisteredUsers() {
                             <button className="danger table-action-btn" disabled={busyId === registeredUser.id} onClick={() => anonymizeUser(registeredUser)}>Személyes adatok törlése</button>
                           </>
                         )}
+                        </div>}
                       </div>
                     </td>
                   </tr>
                 );
               }) : (
-                <tr><td colSpan={10} className="empty-table-cell">Még nincs regisztrált felhasználó.</td></tr>
+                <tr><td colSpan={11} className="empty-table-cell">Még nincs regisztrált felhasználó.</td></tr>
               )}
             </tbody>
           </table>
@@ -2253,6 +2352,8 @@ function Orders() {
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [purchasedProcurementKeys, setPurchasedProcurementKeys] = useState<string[]>([]);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [exportFrom, setExportFrom] = useState("");
+  const [exportTo, setExportTo] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -2306,11 +2407,74 @@ function Orders() {
     });
   }
 
+  function dateStart(value: string) {
+    const [year, month, day] = value.split("-").map(Number);
+    return new Date(year, month - 1, day, 0, 0, 0, 0).getTime();
+  }
+
+  function dateEnd(value: string) {
+    const [year, month, day] = value.split("-").map(Number);
+    return new Date(year, month - 1, day, 23, 59, 59, 999).getTime();
+  }
+
+  function sortReservationsForOrders(source: Reservation[]) {
+    return [...source].sort((a, b) => {
+      const displayDiff = Number(a.product.displayNumber) - Number(b.product.displayNumber);
+      if (Number.isFinite(displayDiff) && displayDiff !== 0) return displayDiff;
+      return new Date(b.reservedAt).getTime() - new Date(a.reservedAt).getTime();
+    });
+  }
+
+  function reservationsInExportRange() {
+    if (exportFrom && exportTo && dateStart(exportFrom) > dateEnd(exportTo)) {
+      return [];
+    }
+    return reservations.filter((reservation) => {
+      const reservedAt = new Date(reservation.reservedAt).getTime();
+      if (exportFrom && reservedAt < dateStart(exportFrom)) return false;
+      if (exportTo && reservedAt > dateEnd(exportTo)) return false;
+      return true;
+    });
+  }
+
+  function procurementGroupsFor(source: Reservation[]) {
+    return Array.from(source.reduce((groups, reservation) => {
+      const key = procurementKey(reservation.product, reservation.size);
+      const group = groups.get(key) ?? { product: reservation.product, size: reservation.size, quantity: 0, reservations: [] as Reservation[] };
+      group.quantity += reservation.quantity;
+      group.reservations.push(reservation);
+      groups.set(key, group);
+      return groups;
+    }, new Map<string, { product: Product; size: string; quantity: number; reservations: Reservation[] }>()).values());
+  }
+
+  function reservationsByUserFor(source: Reservation[]) {
+    return Array.from(source.reduce((groups, reservation) => {
+      const username = reservation.user?.username ?? "-";
+      const group = groups.get(username) ?? { username, quantity: 0, amount: 0, reservations: [] as Reservation[] };
+      group.quantity += reservation.quantity;
+      group.amount += reservation.product.price * reservation.quantity;
+      group.reservations.push(reservation);
+      groups.set(username, group);
+      return groups;
+    }, new Map<string, { username: string; quantity: number; amount: number; reservations: Reservation[] }>()).values())
+      .sort((a, b) => a.username.localeCompare(b.username, "hu"));
+  }
+
   function exportOrdersXls() {
+    if (exportFrom && exportTo && dateStart(exportFrom) > dateEnd(exportTo)) {
+      setError("Az export kezdő dátuma nem lehet későbbi, mint a záró dátum.");
+      return;
+    }
+    setError("");
+    const exportReservations = sortReservationsForOrders(reservationsInExportRange());
+    const exportProcurementGroups = procurementGroupsFor(exportReservations);
+    const exportReservationsByUser = reservationsByUserFor(exportReservations);
+    const dateLabel = exportFrom || exportTo ? `-${exportFrom || "kezdet"}-${exportTo || "vege"}` : "";
     const rows: Array<Array<string | number | null | undefined>> = [
       ["Összesen vásárlandó"],
       ["Product ID", "Sorszám", "Termék", "Méret", "Összesen vásárlandó", "Megvéve"],
-      ...procurementGroups.map((group) => [
+      ...exportProcurementGroups.map((group) => [
         group.product.productId,
         `#${group.product.displayNumber}`,
         productTitle(group.product),
@@ -2321,7 +2485,7 @@ function Orders() {
       [],
       ["Rendelések termék szerint"],
       ["Product ID", "Sorszám", "Termék", "Méret", "Lefoglalt darabszám", "Foglaló felhasználó és foglalás ideje", "Státusz"],
-      ...procurementGroups.map((group) => [
+      ...exportProcurementGroups.map((group) => [
         group.product.productId,
         `#${group.product.displayNumber}`,
         productTitle(group.product),
@@ -2333,7 +2497,7 @@ function Orders() {
       [],
       ["Rendelések felhasználók szerint"],
       ["Felhasználó", "Rendelések", "Összes darab", "Fizetendő", "Státusz"],
-      ...reservationsByUser.map((group) => [
+      ...exportReservationsByUser.map((group) => [
         group.username,
         group.reservations.map((reservation) => `${productNumberPair(reservation.product)} / ${productTitle(reservation.product)} / ${reservation.size} / ${reservation.quantity} db`).join(" | "),
         `${group.quantity} db`,
@@ -2341,34 +2505,15 @@ function Orders() {
         group.reservations.map((reservation) => customerFulfillmentStatusLabels[reservation.status]).join(" | ")
       ])
     ];
-    downloadCsv(`tunde-divat-rendelok-rendelesek-${new Date().toISOString().slice(0, 10)}.csv`, [
+    downloadCsv(`tunde-divat-rendelok-rendelesek${dateLabel}-${new Date().toISOString().slice(0, 10)}.csv`, [
       ...rows
     ]);
   }
 
-  const sortedReservations = [...reservations].sort((a, b) => {
-    const displayDiff = Number(a.product.displayNumber) - Number(b.product.displayNumber);
-    if (Number.isFinite(displayDiff) && displayDiff !== 0) return displayDiff;
-    return new Date(b.reservedAt).getTime() - new Date(a.reservedAt).getTime();
-  });
-  const procurementGroups = Array.from(sortedReservations.reduce((groups, reservation) => {
-    const key = procurementKey(reservation.product, reservation.size);
-    const group = groups.get(key) ?? { product: reservation.product, size: reservation.size, quantity: 0, reservations: [] as Reservation[] };
-    group.quantity += reservation.quantity;
-    group.reservations.push(reservation);
-    groups.set(key, group);
-    return groups;
-  }, new Map<string, { product: Product; size: string; quantity: number; reservations: Reservation[] }>()).values());
-  const reservationsByUser = Array.from(sortedReservations.reduce((groups, reservation) => {
-    const username = reservation.user?.username ?? "-";
-    const group = groups.get(username) ?? { username, quantity: 0, amount: 0, reservations: [] as Reservation[] };
-    group.quantity += reservation.quantity;
-    group.amount += reservation.product.price * reservation.quantity;
-    group.reservations.push(reservation);
-    groups.set(username, group);
-    return groups;
-  }, new Map<string, { username: string; quantity: number; amount: number; reservations: Reservation[] }>()).values())
-    .sort((a, b) => a.username.localeCompare(b.username, "hu"));
+  const sortedReservations = sortReservationsForOrders(reservations);
+  const procurementGroups = procurementGroupsFor(sortedReservations);
+  const reservationsByUser = reservationsByUserFor(sortedReservations);
+  const exportCount = reservationsInExportRange().length;
 
   return (
     <>
@@ -2378,6 +2523,24 @@ function Orders() {
       </header>
       {error && <p className="error">{error}</p>}
       {message && <p className="success">{message}</p>}
+      <section className="panel export-filter-panel">
+        <div>
+          <h2>Export dátumszűrő</h2>
+          <p>A letöltés csak a megadott foglalási dátumtartomány rendeléseit tartalmazza.</p>
+        </div>
+        <label>
+          Kezdő dátum
+          <input type="date" value={exportFrom} onChange={(event) => setExportFrom(event.target.value)} />
+        </label>
+        <label>
+          Záró dátum
+          <input type="date" value={exportTo} onChange={(event) => setExportTo(event.target.value)} />
+        </label>
+        <div className="export-filter-actions">
+          <strong>{exportCount} foglalás kerül az exportba</strong>
+          <button className="secondary" onClick={() => { setExportFrom(""); setExportTo(""); }}>Szűrő törlése</button>
+        </div>
+      </section>
       <section className="panel">
         <div className="section-heading">
           <h2>Összesen vásárlandó</h2>
@@ -2389,6 +2552,7 @@ function Orders() {
               <tr>
                 <th>Product ID</th>
                 <th>Sorszám</th>
+                <th>Kép</th>
                 <th>Termék</th>
                 <th>Méret</th>
                 <th>Összesen vásárlandó</th>
@@ -2398,10 +2562,12 @@ function Orders() {
             <tbody>
               {procurementGroups.length ? procurementGroups.map((group) => {
                 const key = procurementKey(group.product, group.size);
+                const image = productDisplayImage(group.product);
                 return (
                   <tr key={key}>
                     <td>{group.product.productId}</td>
                     <td>#{group.product.displayNumber}</td>
+                    <td>{image ? <img className="table-thumb" src={imageUrl(image)} alt={`Vásárlandó termék ${group.product.displayNumber}`} /> : "-"}</td>
                     <td>{productTitle(group.product)}</td>
                     <td>{group.size}</td>
                     <td><strong>{group.quantity} db</strong></td>
@@ -2413,7 +2579,7 @@ function Orders() {
                   </tr>
                 );
               }) : (
-                <tr><td colSpan={6} className="empty-table-cell">Még nincs vásárlandó termék.</td></tr>
+                <tr><td colSpan={7} className="empty-table-cell">Még nincs vásárlandó termék.</td></tr>
               )}
             </tbody>
           </table>

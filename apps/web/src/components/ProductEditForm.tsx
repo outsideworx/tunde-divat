@@ -13,6 +13,25 @@ function sizeQuantityPayload(sizes: string[], quantities: Record<string, string>
   );
 }
 
+function productFormError(form: {
+  price: string;
+  available_sizes: string[];
+  size_quantities: Record<string, string>;
+}) {
+  if (!form.price.trim()) return "Az ár megadása kötelező.";
+  const price = Number(form.price);
+  if (!Number.isFinite(price) || price <= 0) return "Az ár nullánál nagyobb szám legyen.";
+  if (!form.available_sizes.length) return "Legalább egy méretet válassz ki.";
+  const invalidQuantity = form.available_sizes.find((size) => {
+    const value = form.size_quantities[size]?.trim();
+    if (!value) return false;
+    const quantity = Number(value);
+    return !Number.isInteger(quantity) || quantity < 0;
+  });
+  if (invalidQuantity) return `${invalidQuantity} méretnél a maximum darabszám 0 vagy annál nagyobb egész szám legyen.`;
+  return "";
+}
+
 export function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () => void }) {
   const [form, setForm] = useState({
     product_id: product.productId,
@@ -30,6 +49,8 @@ export function ProductEditForm({ product, onSaved }: { product: Product; onSave
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
+    const validationError = productFormError(form);
+    if (validationError) return setError(validationError);
     setBusy(true);
     setError("");
     try {

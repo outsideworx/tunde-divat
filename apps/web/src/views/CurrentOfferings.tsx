@@ -10,6 +10,10 @@ export function CurrentOfferings() {
   const [products, setProducts] = useState<Product[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [bulkDeadline, setBulkDeadline] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState("");
+  const [bulkError, setBulkError] = useState("");
   async function load() {
     const [productRes, reservationRes] = await Promise.all([
       api<{ products: Product[] }>("/api/products?status=APPROVED"),
@@ -28,9 +32,49 @@ export function CurrentOfferings() {
     const image = productDisplayImage(product);
     if (image) await downloadProductImage(product, image, productGeneratedImage(product) ? "generated" : "raw");
   }
+  async function updateAllDeadlines(event: React.FormEvent) {
+    event.preventDefault();
+    setBulkMessage("");
+    setBulkError("");
+    if (!bulkDeadline) {
+      setBulkError("Adj meg egy új foglalási határidőt.");
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const res = await api<{ count: number; products: Product[] }>("/api/products/bulk/reservation-deadline", {
+        method: "PATCH",
+        body: JSON.stringify({ reservable_until: new Date(bulkDeadline).toISOString() })
+      });
+      setProducts(res.products.filter((product) => productDisplayImage(product)));
+      setBulkMessage(`${res.count} élő termék foglalási határideje frissült.`);
+      setBulkDeadline("");
+    } catch (err) {
+      setBulkError(err instanceof Error ? err.message : "A tömeges határidő módosítása sikertelen.");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
   return (
     <>
       <header className="topbar"><h1>Jelenlegi kínálat</h1></header>
+      <section className="panel bulk-deadline-panel">
+        <div>
+          <h2>Foglalási határidő tömeges módosítása</h2>
+          <p>Az itt megadott időpont felülírja az összes jelenleg élő termék korábbi foglalási határidejét.</p>
+        </div>
+        <form className="bulk-deadline-form" onSubmit={updateAllDeadlines}>
+          <label>
+            Új foglalási határidő
+            <input type="datetime-local" value={bulkDeadline} onChange={(event) => setBulkDeadline(event.target.value)} />
+          </label>
+          <button className="primary" disabled={bulkBusy || products.length === 0} type="submit">
+            {bulkBusy ? "Frissítés..." : "Összes élő termék frissítése"}
+          </button>
+        </form>
+        {bulkError && <p className="error">{bulkError}</p>}
+        {bulkMessage && <p className="success">{bulkMessage}</p>}
+      </section>
       <section className="panel">
         <div className="table-wrap">
           <table>

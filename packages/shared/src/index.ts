@@ -38,6 +38,10 @@ export const productPayloadSchema = z.object({
   reservable_duration_hours: z.coerce.number().int().positive().max(24 * 30).optional().nullable()
 });
 
+export const bulkReservationDeadlinePayloadSchema = z.object({
+  reservable_until: z.coerce.date()
+});
+
 export const pickupOptionPayloadSchema = z.object({
   address: z.string().trim().min(3).max(255),
   start_at: z.coerce.date(),
@@ -96,6 +100,7 @@ export const adminUserUpdateSchema = z.object({
 });
 
 export type ProductPayload = z.infer<typeof productPayloadSchema>;
+export type BulkReservationDeadlinePayload = z.infer<typeof bulkReservationDeadlinePayloadSchema>;
 export type PickupOptionPayload = z.infer<typeof pickupOptionPayloadSchema>;
 export type GenerationPayload = z.infer<typeof generationPayloadSchema>;
 export type ReservationPayload = z.infer<typeof reservationPayloadSchema>;

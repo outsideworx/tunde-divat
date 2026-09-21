@@ -535,7 +535,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
 
   return (
     <main className="auth-shell">
-      <span className="build-version">ver.: 1.03</span>
+      <span className="build-version">ver.: 1.04</span>
       <section className="brand-panel">
         <span className="sr-only">Tünde Divat Online</span>
       </section>
@@ -1079,7 +1079,15 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
       </button>
       <section className="product-detail">
         <div className="product-detail-image">
-          <img src={imageUrl(displayImage)} alt={customerProductTitle(product)} />
+          {galleryImages.length > 1 ? (
+            <button
+              className="product-detail-image-button"
+              onClick={() => setGalleryIndex((value) => (value + 1) % galleryImages.length)}
+              aria-label="Következő termékkép"
+            >
+              <img src={imageUrl(displayImage)} alt={customerProductTitle(product)} />
+            </button>
+          ) : <img src={imageUrl(displayImage)} alt={customerProductTitle(product)} />}
           {galleryImages.length > 1 && <div className="product-gallery-controls">
             <button onClick={() => setGalleryIndex((value) => (value - 1 + galleryImages.length) % galleryImages.length)} aria-label="Előző kép"><ChevronLeft size={22} /></button>
             <span>{galleryIndex + 1} / {galleryImages.length}</span>

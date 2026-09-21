@@ -27,6 +27,14 @@ enum ImageType {
   FINAL
 }
 
+enum ImageViewType {
+  FRONT
+  BACK
+  DETAIL
+  AUTO
+  OTHER
+}
+
 enum GenerationStatus {
   PENDING
   PROCESSING
@@ -75,6 +83,7 @@ model Product {
   targetGroup             String?         @map("target_group")
   reservableUntil         DateTime?       @map("reservable_until")
   reservableDurationHours Int?            @map("reservable_duration_hours")
+  displayImageId          Int?            @map("display_image_id")
   status                  ProductStatus   @default(DRAFT)
   createdBy               Int?            @map("created_by")
   creator                 User?           @relation("ProductCreator", fields: [createdBy], references: [id], onDelete: SetNull)
@@ -167,9 +176,14 @@ model ProductImage {
   mimeType    String    @map("mime_type")
   width       Int?
   height      Int?
+  sortOrder   Int       @default(0) @map("sort_order")
+  sourceImageId Int?    @map("source_image_id")
+  isHidden    Boolean   @default(false) @map("is_hidden")
+  viewType    ImageViewType @default(AUTO) @map("view_type")
   createdAt   DateTime  @default(now()) @map("created_at")
 
   @@index([productFk, imageType])
+  @@index([productFk, sortOrder])
   @@map("product_images")
 }
 

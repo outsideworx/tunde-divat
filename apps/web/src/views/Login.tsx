@@ -68,7 +68,7 @@ export function Login({ onLogin }: { onLogin: (user: User) => void }) {
 
   return (
     <main className="auth-shell">
-      <span className="build-version">ver.: 1.02</span>
+      <span className="build-version">ver.: 1.03</span>
       <section className="brand-panel">
         <div />
         <div>

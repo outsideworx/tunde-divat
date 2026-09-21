@@ -11,6 +11,7 @@ export const productStatuses = [
 
 export const generationStatuses = ["PENDING", "PROCESSING", "COMPLETED", "FAILED"] as const;
 export const imageTypes = ["ORIGINAL", "AI_GENERATED", "FINAL"] as const;
+export const imageViewTypes = ["FRONT", "BACK", "DETAIL", "AUTO", "OTHER"] as const;
 export const userRoles = ["ADMIN", "STAFF"] as const;
 export const reservationStatuses = [
   "PROCUREMENT_PENDING",
@@ -19,14 +20,14 @@ export const reservationStatuses = [
   "PICKED_UP_PAID"
 ] as const;
 
-export const allowedSizes = ["XS", "S", "M", "L", "XL", "XXL", "S-M", "M-L", "L-XL"] as const;
+export const allowedSizes = ["XS", "S", "M", "L", "XL", "XXL", "S-M", "M-L", "L-XL", "1", "2", "3", "4", "5"] as const;
 
 export const productPayloadSchema = z.object({
   product_id: z.string().trim().max(80).optional().nullable(),
   product_name: z.string().trim().min(1).max(160).optional().nullable(),
   display_number: z.string().trim().min(1).max(20).regex(/^[\p{L}\p{N}-]+$/u).optional().nullable(),
   price: z.coerce.number().int().positive().max(10_000_000),
-  available_sizes: z.array(z.enum(allowedSizes)).min(1).max(12),
+  available_sizes: z.array(z.enum(allowedSizes)).min(1).max(14),
   size_quantities: z.record(z.coerce.number().int().nonnegative().max(10_000)).optional(),
   category: z.string().trim().max(80).optional().nullable(),
   color: z.string().trim().max(80).optional().nullable(),
@@ -86,7 +87,8 @@ export const inviteCodePayloadSchema = z.object({
 });
 
 export const generationPayloadSchema = z.object({
-  gender: z.enum(["female", "male"]).default("female")
+  gender: z.enum(["female", "male"]).default("female"),
+  image_id: z.coerce.number().int().positive().optional()
 });
 
 export const adminUserUpdateSchema = z.object({
@@ -111,6 +113,7 @@ export type AdminUserUpdatePayload = z.infer<typeof adminUserUpdateSchema>;
 export type ProductStatus = (typeof productStatuses)[number];
 export type GenerationStatus = (typeof generationStatuses)[number];
 export type ImageType = (typeof imageTypes)[number];
+export type ImageViewType = (typeof imageViewTypes)[number];
 export type UserRole = (typeof userRoles)[number];
 export type ReservationStatus = (typeof reservationStatuses)[number];
 
@@ -120,6 +123,7 @@ export type ProductImageDto = {
   id: number;
   productFk: number;
   imageType: ImageType;
+  viewType: ImageViewType;
   storagePath: string;
   mimeType: string;
   width: number | null;

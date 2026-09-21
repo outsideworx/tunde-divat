@@ -1,10 +1,10 @@
 import { Router } from "express";
 import multer from "multer";
-import { bulkReservationDeadlinePayloadSchema, generationPayloadSchema, productPayloadSchema } from "@fashion-mvp/shared";
+import { bulkReservationDeadlinePayloadSchema, generationPayloadSchema, imageViewTypes, productPayloadSchema } from "@fashion-mvp/shared";
 import { env } from "../config/env.js";
 import { requireAdmin, requireAuth } from "../middleware/auth.js";
 import { generationLimiter, uploadLimiter } from "../middleware/rateLimiters.js";
-import { asyncHandler } from "../utils/errors.js";
+import { AppError, asyncHandler } from "../utils/errors.js";
 import { logger } from "../utils/securityLog.js";
 import { ProductService } from "../services/productService.js";
 import { validateImageUpload } from "../services/uploadValidation.js";
@@ -38,6 +38,36 @@ productRoutes.post(
   asyncHandler(async (req, res) => {
     const payload = productPayloadSchema.parse(req.body);
     res.status(201).json({ product: await products.create(payload, req.user!.id) });
+  })
+);
+
+productRoutes.put(
+  "/:id/images/order",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const imageIds = Array.isArray(req.body?.image_ids) && req.body.image_ids.every((value: unknown) => Number.isInteger(value))
+      ? req.body.image_ids as number[]
+      : null;
+    if (!imageIds?.length) throw new AppError(400, "Adj meg legalább egy képet a sorrendhez.");
+    res.json({ product: await products.reorderImages(Number(req.params.id), imageIds) });
+  })
+);
+
+productRoutes.put(
+  "/:id/display-image",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const imageId = req.body?.image_id === null ? null : Number(req.body?.image_id);
+    if (imageId !== null && (!Number.isInteger(imageId) || imageId < 1)) throw new AppError(400, "Érvénytelen képkiválasztás.");
+    res.json({ product: await products.setDisplayImage(Number(req.params.id), imageId) });
+  })
+);
+
+productRoutes.post(
+  "/:id/send-to-ai",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    res.json({ product: await products.sendToAi(Number(req.params.id)) });
   })
 );
 
@@ -83,7 +113,11 @@ productRoutes.post(
   upload.single("image"),
   asyncHandler(async (req, res) => {
     const metadata = await validateImageUpload(req.file);
-    res.json({ product: await products.addOriginalImage(Number(req.params.id), req.file!, metadata) });
+    const requestedView = req.body?.view_type;
+    if (requestedView !== undefined && (typeof requestedView !== "string" || !imageViewTypes.includes(requestedView as (typeof imageViewTypes)[number]))) {
+      throw new AppError(400, "Érvénytelen képtípus.");
+    }
+    res.json({ product: await products.addOriginalImage(Number(req.params.id), req.file!, metadata, requestedView ?? "AUTO") });
   })
 );
 
@@ -92,7 +126,16 @@ productRoutes.post(
   generationLimiter,
   asyncHandler(async (req, res) => {
     const payload = generationPayloadSchema.parse(req.body ?? {});
-    res.json({ product: await products.generate(Number(req.params.id), payload.gender) });
+    res.json({ product: await products.generate(Number(req.params.id), payload.gender, payload.image_id) });
+  })
+);
+
+productRoutes.put(
+  "/:id/images/:imageId/visibility",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    if (typeof req.body?.is_hidden !== "boolean") throw new AppError(400, "A kép láthatósága kötelező.");
+    res.json({ image: await products.setImageVisibility(Number(req.params.id), Number(req.params.imageId), req.body.is_hidden) });
   })
 );
 

@@ -10,13 +10,14 @@ export type ImageGenerationResult = {
 };
 
 export type ModelGender = "female" | "male";
+export type GarmentView = "FRONT" | "BACK" | "DETAIL" | "AUTO" | "OTHER";
 
 export class ImageGenerationService {
   constructor(private provider: "mock" | "openai" = "mock") {}
 
-  async generateMarketingBase(original: Buffer, gender: ModelGender = "female"): Promise<ImageGenerationResult> {
+  async generateMarketingBase(original: Buffer, gender: ModelGender = "female", viewType: GarmentView = "AUTO"): Promise<ImageGenerationResult> {
     if (this.provider === "openai") {
-      return this.generateWithOpenAI(original, gender);
+      return this.generateWithOpenAI(original, gender, viewType);
     }
     const composed = sharp(original).rotate().resize(1080, 1350, {
       fit: "contain",
@@ -33,7 +34,7 @@ export class ImageGenerationService {
     };
   }
 
-  private async generateWithOpenAI(original: Buffer, gender: ModelGender): Promise<ImageGenerationResult> {
+  private async generateWithOpenAI(original: Buffer, gender: ModelGender, viewType: GarmentView): Promise<ImageGenerationResult> {
     if (!env.OPENAI_API_KEY) {
       throw new Error("OPENAI_API_KEY is required when AI_PROVIDER=openai.");
     }
@@ -51,15 +52,24 @@ export class ImageGenerationService {
     form.append("size", "1024x1536");
     form.append("quality", "medium");
     const modelDescription = gender === "male"
-      ? "Show the same garment on a natural-looking adult male model in a simple standing pose, with a friendly natural smile."
-      : "Show the same garment on a natural-looking adult female model in a simple standing pose, with a friendly natural smile.";
+      ? "Show the same garment on a natural-looking adult male model with a friendly, natural smile and relaxed, confident posture. Use a natural fashion pose, such as a subtle step or a relaxed standing pose."
+      : "Show the same garment on a natural-looking adult female model with a friendly, natural smile and relaxed, elegant posture. Use a natural fashion pose, such as a subtle step or a relaxed standing pose.";
+    const viewDescription: Record<GarmentView, string> = {
+      FRONT: "The uploaded photo shows the front of the garment. The model must clearly show the garment from the front.",
+      BACK: "The uploaded photo shows the back of the garment. The model must be posed so the garment's back is clearly visible.",
+      DETAIL: "The uploaded photo is a garment detail. Preserve that detail exactly and compose the model image so the detail remains clearly visible.",
+      AUTO: "Determine from the uploaded photo whether it shows the garment front, back, or a detail, then preserve that same viewpoint in the result.",
+      OTHER: "This view type is not eligible for generation."
+    };
     form.append("prompt", [
-      "Create a professional vertical ecommerce fashion photo from the uploaded clothing product reference.",
+      "Create a refined vertical ecommerce fashion photo from the uploaded clothing product reference.",
       modelDescription,
-      "Preserve the garment's color, cut, material feel, pattern, proportions, and visible details as faithfully as possible.",
-      "Place the model in a clean, bright, neutral boutique store environment or modern fashion shop background, with soft natural lighting, subtle clothing racks or fitting-room details in the background, and no distracting objects.",
+      viewDescription[viewType],
+      "Frame the model from at least knee level to full length where possible, with the garment clearly visible and naturally styled with simple, unobtrusive complementary clothing.",
+      "Treat the uploaded garment as the exact product. Preserve its exact color palette, print placement and scale, cut, neckline, bow or tie details, sleeve shape, hemline, fabric drape, proportions, seams, and all visible construction details. Do not redesign, simplify, replace, or invent garment details.",
+      "Place the model in a clean, bright, neutral boutique interior or modern fashion shop. Use soft warm natural light, a tasteful premium atmosphere, a gently blurred background, and only subtle clothing racks or fitting-room details. Keep the setting uncluttered and never use an outdoor scene.",
       "Do not add text, logos, watermarks, numbers, prices, size labels, badges, or decorative typography.",
-      "The output should be realistic, tasteful, and ready for review before publishing."
+      "The output should be photorealistic, polished, welcoming, tasteful, and ready for review before publishing."
     ].join(" "));
 
     const response = await fetch("https://api.openai.com/v1/images/edits", {

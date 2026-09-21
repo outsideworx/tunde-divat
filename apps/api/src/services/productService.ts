@@ -6,11 +6,11 @@ import { StorageService } from "./storageService.js";
 import { ImageGenerationService } from "./imageGenerationService.js";
 import { ImageOverlayService } from "./imageOverlayService.js";
 import { env } from "../config/env.js";
-import type { ModelGender } from "./imageGenerationService.js";
+import type { GarmentView, ModelGender } from "./imageGenerationService.js";
 
 const includeProduct = {
   sizes: true,
-  images: true,
+  images: { orderBy: [{ sortOrder: "asc" as const }, { id: "asc" as const }] },
   generationJobs: { orderBy: { createdAt: "desc" as const }, take: 5 }
 };
 
@@ -23,6 +23,26 @@ function sizeCreateData(payload: Pick<ProductPayload, "available_sizes" | "size_
     size,
     quantity: payload.size_quantities?.[size] ?? null
   }));
+}
+
+function shareImageIds(images: ProductWithRelations["images"]) {
+  const latestFinalBySource = new Map<string, number>();
+  for (const image of images) {
+    if (image.imageType !== "FINAL") continue;
+    const key = image.sourceImageId == null ? "legacy" : String(image.sourceImageId);
+    const currentId = latestFinalBySource.get(key);
+    if (currentId == null || image.id > currentId) latestFinalBySource.set(key, image.id);
+  }
+  const finalIds = new Set(latestFinalBySource.values());
+  const finalSourceIds = new Set(images.filter((image) => finalIds.has(image.id) && image.sourceImageId != null).map((image) => image.sourceImageId));
+  return images
+    .filter((image) => {
+      if (image.imageType === "ORIGINAL") return true;
+      if (image.imageType === "FINAL") return finalIds.has(image.id);
+      if (image.imageType !== "AI_GENERATED") return false;
+      return image.sourceImageId == null ? finalIds.size === 0 : !finalSourceIds.has(image.sourceImageId);
+    })
+    .map((image) => image.id);
 }
 
 export class ProductService {
@@ -138,10 +158,17 @@ export class ProductService {
     return { count: result.count, products };
   }
 
-  async addOriginalImage(id: number, file: Express.Multer.File, metadata: { width?: number; height?: number }) {
-    await this.get(id);
+  async addOriginalImage(id: number, file: Express.Multer.File, metadata: { width?: number; height?: number }, viewType: GarmentView = "AUTO") {
+    const product = await this.get(id);
+    if (product.images.filter((image) => image.imageType === "ORIGINAL").length >= 5) {
+      throw new AppError(400, "Egy termékhez legfeljebb 5 eredeti képet tölthetsz fel.");
+    }
     const ext = file.mimetype === "image/png" ? "png" : file.mimetype === "image/webp" ? "webp" : "jpg";
     const stored = await this.storage.save(file.buffer, ext);
+    const lastImage = await prisma.productImage.findFirst({
+      where: { productFk: id },
+      orderBy: [{ sortOrder: "desc" }, { id: "desc" }]
+    });
     await prisma.productImage.create({
       data: {
         productFk: id,
@@ -149,23 +176,69 @@ export class ProductService {
         storagePath: stored.storagePath,
         mimeType: file.mimetype,
         width: metadata.width,
-        height: metadata.height
+        height: metadata.height,
+        sortOrder: (lastImage?.sortOrder ?? -1) + 1,
+        viewType
       }
     });
     return this.get(id);
   }
 
-  async generate(id: number, gender: ModelGender = "female") {
+  async reorderImages(id: number, imageIds: number[]) {
+    const product = await this.get(id);
+    const knownIds = shareImageIds(product.images).sort((a, b) => a - b);
+    const requestedIds = [...imageIds].sort((a, b) => a - b);
+    if (knownIds.length !== requestedIds.length || knownIds.some((value, index) => value !== requestedIds[index])) {
+      throw new AppError(400, "A képsorrend nem ehhez a termékhez tartozik.");
+    }
+    await prisma.$transaction([
+      ...imageIds.map((imageId, index) => prisma.productImage.update({
+        where: { id: imageId },
+        data: { sortOrder: index }
+      })),
+      prisma.product.update({ where: { id }, data: { displayImageId: imageIds[0] } })
+    ]);
+    return this.get(id);
+  }
+
+  async setDisplayImage(id: number, imageId: number | null) {
+    const product = await this.get(id);
+    if (imageId !== null && !product.images.some((image) => image.id === imageId)) {
+      throw new AppError(400, "A kiválasztott kép nem ehhez a termékhez tartozik.");
+    }
+    return prisma.product.update({ where: { id }, data: { displayImageId: imageId }, include: includeProduct });
+  }
+
+  async sendToAi(id: number) {
+    const product = await this.get(id);
+    if (!product.images.some((image) => image.imageType === "ORIGINAL")) {
+      throw new AppError(400, "AI-generáláshoz legalább egy eredeti kép szükséges.");
+    }
+    return prisma.product.update({ where: { id }, data: { status: "DRAFT" }, include: includeProduct });
+  }
+
+  async setImageVisibility(id: number, imageId: number, isHidden: boolean) {
+    const product = await this.get(id);
+    if (!product.images.some((image) => image.id === imageId)) {
+      throw new AppError(400, "A kiválasztott kép nem ehhez a termékhez tartozik.");
+    }
+    return prisma.productImage.update({ where: { id: imageId }, data: { isHidden } });
+  }
+
+  async generate(id: number, gender: ModelGender = "female", originalImageId?: number) {
     const product = await this.ensurePublicDisplayNumber(id);
-    const original = product.images.find((image) => image.imageType === "ORIGINAL");
+    const original = originalImageId
+      ? product.images.find((image) => image.id === originalImageId && image.imageType === "ORIGINAL")
+      : product.images.find((image) => image.imageType === "ORIGINAL");
     if (!original) throw new AppError(400, "Original image is required before generation");
+    if (original.viewType === "OTHER") throw new AppError(400, "Az Egyéb képtípus csak a galériában jelenik meg, AI-generálásra nem küldhető.");
     const job = await prisma.generationJob.create({
       data: { productFk: id, status: "PROCESSING", provider: env.AI_PROVIDER }
     });
     await prisma.product.update({ where: { id }, data: { status: "PROCESSING" } });
     try {
       const originalBuffer = await this.storage.read(original.storagePath);
-      const generated = await this.ai.generateMarketingBase(originalBuffer, gender);
+      const generated = await this.ai.generateMarketingBase(originalBuffer, gender, original.viewType);
       const aiStored = await this.storage.save(generated.buffer, "webp");
       await prisma.productImage.create({
         data: {
@@ -174,10 +247,12 @@ export class ProductService {
           storagePath: aiStored.storagePath,
           mimeType: generated.mimeType,
           width: generated.width,
-          height: generated.height
+          height: generated.height,
+          sourceImageId: original.id,
+          viewType: original.viewType
         }
       });
-      await this.createFinalOverlay(id, generated.buffer);
+      await this.createFinalOverlay(id, generated.buffer, original.id, original.viewType);
       await prisma.generationJob.update({
         where: { id: job.id },
         data: { status: "COMPLETED", completedAt: new Date() }
@@ -199,7 +274,7 @@ export class ProductService {
     const aiImage = product.images.find((image) => image.imageType === "AI_GENERATED");
     if (!aiImage) throw new AppError(400, "AI generated image is required before overlay regeneration");
     const buffer = await this.storage.read(aiImage.storagePath);
-    await this.createFinalOverlay(id, buffer);
+    await this.createFinalOverlay(id, buffer, aiImage.sourceImageId ?? undefined, aiImage.viewType);
     return this.get(id);
   }
 
@@ -304,7 +379,7 @@ export class ProductService {
     throw new AppError(500, "Nem sikerült automatikus Product ID-t kiosztani.");
   }
 
-  private async createFinalOverlay(id: number, sourceBuffer: Buffer) {
+  private async createFinalOverlay(id: number, sourceBuffer: Buffer, sourceImageId?: number, viewType: GarmentView = "AUTO") {
     const product = await this.get(id);
     const final = await this.overlay.apply({
       image: sourceBuffer,
@@ -320,7 +395,9 @@ export class ProductService {
         storagePath: stored.storagePath,
         mimeType: final.mimeType,
         width: final.width,
-        height: final.height
+        height: final.height,
+        sourceImageId,
+        viewType
       }
     });
   }
@@ -334,11 +411,14 @@ export class ProductService {
       payload.color
     ].filter(Boolean).join(" ").toLowerCase();
     if (/(cipő|cipo|shoe|csizma|szandál|szandal|sneaker)/i.test(text)) return "Cipő";
-    if (/(nadrág|nadrag|farmer|jeans|leggings|szoknya)/i.test(text)) return "Alsó";
+    if (/(harisnya|zokni|pantyhose|tights)/i.test(text)) return "Harisnya";
+    if (/(táska|taska|bag)/i.test(text)) return "Táska";
+    if (/(sapka|kalap|cap|hat)/i.test(text)) return "Sapka";
+    if (/(nadrág|nadrag|farmer|jeans|leggings|szoknya)/i.test(text)) return "Nadrág";
     if (/(kabát|kabat|dzseki|blézer|blezer|mellény|melleny)/i.test(text)) return "Kabát";
     if (/(ruha|dress|overál|overal)/i.test(text)) return "Ruha";
-    if (/(felső|felso|póló|polo|blúz|bluz|pulóver|pulover|top|ing)/i.test(text)) return "Felső";
-    if (/(táska|taska|öv|ov|sál|sal|sapka|kiegészítő|kiegeszito)/i.test(text)) return "Kiegészítő";
-    return "Ruházat";
+    if (/(póló|polo|t-shirt|tshirt)/i.test(text)) return "Póló";
+    if (/(felső|felso|blúz|bluz|pulóver|pulover|top|ing)/i.test(text)) return "Felső";
+    return "Egyéb";
   }
 }

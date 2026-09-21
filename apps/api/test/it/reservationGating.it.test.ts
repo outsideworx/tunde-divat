@@ -1,12 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
+import sharp from "sharp";
 import { createTestContext, seedUser, type TestContext } from "./setup.js";
 
-const PNG_1x1 = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
-  "base64"
-);
+const PNG_1x1 = await sharp({ create: { width: 2, height: 2, channels: 3, background: "#d8c1c4" } }).png().toBuffer();
 
 async function login(app: Express, username: string, password: string) {
   const res = await request(app).post("/api/auth/login").send({ username, password });
@@ -93,6 +91,37 @@ describe("reservation gating", () => {
       .send({ product_id: approvedProductId, size: "M", pickup_id: pickupId });
     expect(again.status).toBe(201);
     expect(again.body.reservation.canCancel).toBe(false);
+  });
+
+  it("reserves the selected color and size from a color-specific inventory", async () => {
+    const created = await request(ctx.app)
+      .post("/api/products")
+      .set("Cookie", adminCookie)
+      .send({
+        product_id: "COLOR-RES",
+        price: 4200,
+        available_sizes: [],
+        color_variants: [
+          { color: "Bordó", sizes: [{ size: "M", quantity: 2 }, { size: "L", quantity: null }] },
+          { color: "Fekete", sizes: [{ size: "M", quantity: 1 }] }
+        ]
+      });
+    expect(created.status).toBe(201);
+    const productId = created.body.product.id;
+    await request(ctx.app)
+      .post(`/api/products/${productId}/image`)
+      .set("Cookie", adminCookie)
+      .attach("image", PNG_1x1, { filename: "colored-product.png", contentType: "image/png" });
+    await request(ctx.app).post(`/api/products/${productId}/generate`).set("Cookie", adminCookie).send({});
+    await request(ctx.app).post(`/api/products/${productId}/approve`).set("Cookie", adminCookie);
+
+    const reservation = await request(ctx.app)
+      .post("/api/reservations")
+      .set("Cookie", staffCookie)
+      .send({ product_id: productId, color: "Bordó", size: "M", quantity: 2, pickup_id: pickupId });
+    expect(reservation.status).toBe(201);
+    expect(reservation.body.reservation.color).toBe("Bordó");
+    expect(reservation.body.reservation.size).toBe("M");
   });
 
   it("forbids a STAFF user from listing all reservations (ADMIN only)", async () => {

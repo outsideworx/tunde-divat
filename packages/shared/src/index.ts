@@ -22,13 +22,22 @@ export const reservationStatuses = [
 
 export const allowedSizes = ["XS", "S", "M", "L", "XL", "XXL", "S-M", "M-L", "L-XL", "1", "2", "3", "4", "5"] as const;
 
-export const productPayloadSchema = z.object({
+const colorVariantPayloadSchema = z.object({
+  color: z.string().trim().min(1).max(80),
+  sizes: z.array(z.object({
+    size: z.enum(allowedSizes),
+    quantity: z.coerce.number().int().nonnegative().max(10_000).nullable()
+  })).min(1).max(14)
+});
+
+const productPayloadBaseSchema = z.object({
   product_id: z.string().trim().max(80).optional().nullable(),
   product_name: z.string().trim().min(1).max(160).optional().nullable(),
   display_number: z.string().trim().min(1).max(20).regex(/^[\p{L}\p{N}-]+$/u).optional().nullable(),
   price: z.coerce.number().int().positive().max(10_000_000),
-  available_sizes: z.array(z.enum(allowedSizes)).min(1).max(14),
+  available_sizes: z.array(z.enum(allowedSizes)).max(14),
   size_quantities: z.record(z.coerce.number().int().nonnegative().max(10_000)).optional(),
+  color_variants: z.array(colorVariantPayloadSchema).min(1).max(20).optional(),
   category: z.string().trim().max(80).optional().nullable(),
   color: z.string().trim().max(80).optional().nullable(),
   brand: z.string().trim().max(80).optional().nullable(),
@@ -38,6 +47,22 @@ export const productPayloadSchema = z.object({
   reservable_until: z.coerce.date().optional().nullable(),
   reservable_duration_hours: z.coerce.number().int().positive().max(24 * 30).optional().nullable()
 });
+
+export const productPayloadSchema = productPayloadBaseSchema.superRefine((payload, ctx) => {
+  const variants = payload.color_variants ?? [];
+  if (!payload.available_sizes.length && !variants.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["available_sizes"], message: "Legalább egy méretet vagy színváltozatot adj meg." });
+  }
+  if (variants.length && payload.available_sizes.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["color_variants"], message: "Színváltozatoknál a méreteket színenként add meg." });
+  }
+  const colorNames = variants.map((variant) => variant.color.trim().toLocaleLowerCase("hu-HU"));
+  if (new Set(colorNames).size !== colorNames.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["color_variants"], message: "Egy színt csak egyszer adhatsz meg." });
+  }
+});
+
+export const productUpdatePayloadSchema = productPayloadBaseSchema.partial();
 
 export const bulkReservationDeadlinePayloadSchema = z.object({
   reservable_until: z.coerce.date()
@@ -54,6 +79,7 @@ export const pickupOptionPayloadSchema = z.object({
 
 export const reservationPayloadSchema = z.object({
   product_id: z.coerce.number().int().positive(),
+  color: z.string().trim().min(1).max(80).optional().nullable(),
   size: z.enum(allowedSizes),
   pickup_id: z.coerce.number().int().positive().optional().nullable(),
   quantity: z.coerce.number().int().positive().max(20).optional()
@@ -134,6 +160,7 @@ export type ProductImageDto = {
 export type ProductSizeDto = {
   id: number;
   productFk: number;
+  color: string | null;
   size: string;
   quantity: number | null;
 };
@@ -207,6 +234,7 @@ export type ReservationDto = {
   productFk: number;
   userId: number;
   pickupFk: number | null;
+  color: string | null;
   size: string;
   quantity: number;
   status: ReservationStatus;

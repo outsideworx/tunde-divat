@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,15 +9,12 @@ import type { Express } from "express";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const migrationsDir = path.resolve(here, "../../prisma/migrations");
 
-// Ordered migration SQL files (Prisma names migrations with a sortable prefix).
-const MIGRATIONS = [
-  "20260831100000_initial_sqlite/migration.sql",
-  "20260903112000_optional_reservation_pickup/migration.sql",
-  "20260903120000_reservation_active_unique/migration.sql",
-  "20260903143000_add_privacy_acceptance_to_users/migration.sql",
-  "20260903150000_add_user_admin_management/migration.sql",
-  "20260905120000_user_role_default_staff/migration.sql"
-];
+// Prisma migration directories have sortable timestamps. Reading them here keeps
+// the throwaway test database aligned with the schema used by the application.
+const MIGRATIONS = readdirSync(migrationsDir)
+  .filter((name) => /^\d+_/.test(name))
+  .sort()
+  .map((name) => `${name}/migration.sql`);
 
 export type TestContext = {
   app: Express;

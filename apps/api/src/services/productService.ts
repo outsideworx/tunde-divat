@@ -18,8 +18,16 @@ type ProductWithRelations = Prisma.ProductGetPayload<{ include: typeof includePr
 const PUBLIC_DISPLAY_COUNTER = "PUBLIC_DISPLAY_NUMBER";
 const PRODUCT_ID_COUNTER = "PRODUCT_ID_NUMBER";
 
-function sizeCreateData(payload: Pick<ProductPayload, "available_sizes" | "size_quantities">) {
+function sizeCreateData(payload: Pick<ProductPayload, "available_sizes" | "size_quantities" | "color_variants">) {
+  if (payload.color_variants?.length) {
+    return payload.color_variants.flatMap((variant) => variant.sizes.map(({ size, quantity }) => ({
+      color: variant.color,
+      size,
+      quantity
+    })));
+  }
   return payload.available_sizes.map((size) => ({
+    color: null,
     size,
     quantity: payload.size_quantities?.[size] ?? null
   }));
@@ -114,10 +122,10 @@ export class ProductService {
 
   async update(id: number, payload: Partial<ProductPayload>) {
     const existing = await this.get(id);
-    const nextSizes = payload.available_sizes;
+    const hasSizeUpdate = payload.available_sizes !== undefined || payload.color_variants !== undefined;
     const hadAiImage = existing.images.some((image) => image.imageType === "AI_GENERATED");
     const product = await prisma.$transaction(async (tx) => {
-      if (nextSizes) {
+      if (hasSizeUpdate) {
         await tx.productSize.deleteMany({ where: { productFk: id } });
       }
       return tx.product.update({
@@ -135,12 +143,18 @@ export class ProductService {
           targetGroup: payload.target_group,
           reservableUntil: payload.reservable_until === undefined ? existing.reservableUntil : payload.reservable_until,
           reservableDurationHours: payload.reservable_duration_hours === undefined ? existing.reservableDurationHours : payload.reservable_duration_hours,
-          sizes: nextSizes ? { create: sizeCreateData({ available_sizes: nextSizes, size_quantities: payload.size_quantities }) } : undefined
+          sizes: hasSizeUpdate ? {
+            create: sizeCreateData({
+              available_sizes: payload.available_sizes ?? [],
+              size_quantities: payload.size_quantities,
+              color_variants: payload.color_variants
+            })
+          } : undefined
         },
         include: includeProduct
       });
     });
-    if (hadAiImage && (payload.display_number || payload.price || payload.available_sizes)) {
+    if (hadAiImage && (payload.display_number || payload.price || payload.available_sizes || payload.color_variants)) {
       return this.regenerateOverlay(id);
     }
     return product;

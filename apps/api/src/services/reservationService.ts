@@ -38,14 +38,22 @@ export class ReservationService {
     if (product.reservableUntil && Date.now() > product.reservableUntil.getTime()) {
       throw new AppError(400, "A foglalási határidő lejárt.");
     }
-    const selectedSize = product.sizes.find((size) => size.size === payload.size);
+    const hasColorVariants = product.sizes.some((size) => size.color !== null);
+    const selectedColor = payload.color?.trim() || null;
+    if (hasColorVariants && !selectedColor) {
+      throw new AppError(400, "Válassz színt is a foglaláshoz.");
+    }
+    if (!hasColorVariants && selectedColor) {
+      throw new AppError(400, "Ez a termék nem színváltozatos.");
+    }
+    const selectedSize = product.sizes.find((size) => size.size === payload.size && size.color === selectedColor);
     if (!selectedSize) {
       throw new AppError(400, "Ez a méret nem foglalható ennél a terméknél.");
     }
     const requestedQuantity = payload.quantity ?? 1;
     if (selectedSize.quantity !== null) {
       const reserved = await prisma.reservation.aggregate({
-        where: { productFk: product.id, size: payload.size, cancelledAt: null },
+        where: { productFk: product.id, color: selectedColor, size: payload.size, cancelledAt: null },
         _sum: { quantity: true }
       });
       const remaining = selectedSize.quantity - (reserved._sum.quantity ?? 0);
@@ -67,6 +75,7 @@ export class ReservationService {
         productFk: product.id,
         userId,
         pickupFk: pickup?.id ?? null,
+        color: selectedColor,
         size: payload.size,
         quantity: requestedQuantity,
         canCancel: !hadCancelledBefore

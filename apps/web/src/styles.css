@@ -543,6 +543,57 @@ textarea { min-height: 92px; resize: vertical; }
 .size-quantity-grid input {
   min-height: 40px;
 }
+.color-mode-button {
+  width: fit-content;
+  justify-self: start;
+}
+.color-variant-fields {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid #b9d6cf;
+  border-radius: 8px;
+  background: #f7fcfa;
+}
+.color-variant-fields > legend {
+  padding: 0 6px;
+  color: #124e45;
+  font-weight: 900;
+}
+.color-variant-fields > p {
+  margin: 0;
+  color: #4b635e;
+  font-size: 13px;
+  font-weight: 650;
+}
+.color-variant-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #d9e7e2;
+  border-radius: 7px;
+  background: #fff;
+}
+.color-variant-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+.color-variant-head label {
+  display: grid;
+  flex: 1;
+  gap: 6px;
+  font-weight: 800;
+}
+.color-variant-card .size-picker,
+.color-variant-card .size-quantity-fields {
+  margin: 0;
+}
+.color-variant-add {
+  width: fit-content;
+}
 .invite-panel {
   display: grid;
   gap: 12px;
@@ -1700,6 +1751,13 @@ tr:last-child td {
 }
 .detail-facts strong.detail-fact-value {
   font-weight: 500;
+}
+.product-size-lines {
+  display: grid;
+  gap: 4px;
+}
+.product-size-lines > span {
+  display: block;
 }
 .detail-facts strong.urgent {
   color: #d92d20;

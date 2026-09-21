@@ -1,13 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
+import sharp from "sharp";
 import { createTestContext, seedUser, type TestContext } from "./setup.js";
 
-// A tiny valid PNG (1x1) so multer + sharp accept the upload in the mock flow.
-const PNG_1x1 = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
-  "base64"
-);
+// Generate a real small PNG so the image pipeline is exercised end to end.
+const PNG_1x1 = await sharp({ create: { width: 2, height: 2, channels: 3, background: "#d8c1c4" } }).png().toBuffer();
 
 async function login(app: Express, username: string, password: string) {
   const res = await request(app).post("/api/auth/login").send({ username, password });

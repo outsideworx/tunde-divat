@@ -141,6 +141,7 @@ model Reservation {
   user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   pickupFk    Int?              @map("pickup_fk")
   pickup      PickupOption?     @relation(fields: [pickupFk], references: [id], onDelete: SetNull)
+  color       String?
   size        String
   quantity    Int               @default(1)
   status      ReservationStatus @default(PROCUREMENT_PENDING)
@@ -158,12 +159,13 @@ model ProductSize {
   id        Int      @id @default(autoincrement())
   productFk Int      @map("product_fk")
   product   Product  @relation(fields: [productFk], references: [id], onDelete: Cascade)
+  color     String?
   size      String
   quantity  Int?
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@unique([productFk, size])
+  @@unique([productFk, color, size])
   @@map("product_sizes")
 }
 

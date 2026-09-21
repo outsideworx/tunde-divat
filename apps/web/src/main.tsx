@@ -39,7 +39,7 @@ type Product = {
   reservableUntil?: string | null;
   reservableDurationHours?: number | null;
   displayImageId?: number | null;
-  sizes: { size: string; quantity?: number | null }[];
+  sizes: { color?: string | null; size: string; quantity?: number | null }[];
   images: ProductImage[];
   createdAt: string;
 };
@@ -49,6 +49,7 @@ type Reservation = {
   productFk: number;
   userId: number;
   pickupFk?: number | null;
+  color?: string | null;
   size: string;
   quantity: number;
   status: ReservationStatus;
@@ -212,7 +213,7 @@ async function downloadProductImage(product: Product, image: ProductImage, varia
 }
 
 function productShareText(product: Product) {
-  return `${productTitle(product)} - ${formatHuf(product.price)}\nMéretek: ${product.sizes.map((s) => s.size).join("; ")}${product.description ? `\n${product.description}` : ""}`;
+  return `${productTitle(product)} - ${formatHuf(product.price)}\nMéretek: ${formatProductSizes(product)}${product.description ? `\n${product.description}` : ""}`;
 }
 
 function downloadFile(filename: string, content: string, type: string) {
@@ -309,8 +310,33 @@ function customerProductTitle(product: Product) {
   return product.productName || product.category || product.description?.split(/[.\n]/)[0].trim().slice(0, 48) || "Termék";
 }
 
-function sortedProductSizes(product: Product) {
-  return [...product.sizes].sort((a, b) => allowedSizes.indexOf(a.size as (typeof allowedSizes)[number]) - allowedSizes.indexOf(b.size as (typeof allowedSizes)[number]));
+function productColors(product: Product) {
+  return [...new Set(product.sizes.map((size) => size.color?.trim()).filter((color): color is string => Boolean(color)))];
+}
+
+function sortedProductSizes(product: Product, color?: string | null) {
+  return product.sizes
+    .filter((size) => color === undefined || (size.color ?? null) === color)
+    .sort((a, b) => allowedSizes.indexOf(a.size as (typeof allowedSizes)[number]) - allowedSizes.indexOf(b.size as (typeof allowedSizes)[number]));
+}
+
+function formatProductSizes(product: Product, includeQuantity = false) {
+  const colors = productColors(product);
+  const formatSize = (item: Product["sizes"][number]) => `${item.size}${includeQuantity && item.quantity != null ? ` (${item.quantity} db)` : ""}`;
+  if (!colors.length) return sortedProductSizes(product).map(formatSize).join("; ");
+  return colors.map((color) => `${color}: ${sortedProductSizes(product, color).map(formatSize).join(", ")}`).join("; ");
+}
+
+function ProductSizeList({ product }: { product: Product }) {
+  const colors = productColors(product);
+  if (!colors.length) {
+    return <span className="product-size-lines"><span>{sortedProductSizes(product).map((size) => size.size).join(", ")}</span></span>;
+  }
+  return (
+    <span className="product-size-lines">
+      {colors.map((color) => <span key={color}><b>{color}:</b> {sortedProductSizes(product, color).map((size) => size.size).join(", ")}</span>)}
+    </span>
+  );
 }
 
 function productIdFromPath() {
@@ -911,7 +937,7 @@ function ReservationsPage({ reservations, pickups, tick, onBackToCatalog, onUpda
                       </button>
                     ) : "-"}
                   </td>
-                  <td>{reservation.size}</td>
+                  <td>{reservation.color ? `${reservation.color}, ` : ""}{reservation.size}</td>
                   <td>{formatHuf(reservation.product.price * reservation.quantity)}</td>
                   <td>{pickupAddress(reservation.pickup)}</td>
                   <td>{pickupRangeText(reservation.pickup)}</td>
@@ -989,7 +1015,9 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
   const galleryImages = [productDisplayImage(product), ...visibleProductShareImages(product)].filter((image, index, images): image is ProductImage => Boolean(image) && images.findIndex((candidate) => candidate?.id === image?.id) === index);
   const [galleryIndex, setGalleryIndex] = useState(0);
   const displayImage = galleryImages[galleryIndex] ?? productDisplayImage(product);
-  const sizes = sortedProductSizes(product);
+  const colors = productColors(product);
+  const [color, setColor] = useState(colors[0] ?? "");
+  const sizes = sortedProductSizes(product, colors.length ? color : undefined);
   const [size, setSize] = useState(sizes[0]?.size ?? "");
   const [quantity, setQuantity] = useState(1);
   const [busy, setBusy] = useState(false);
@@ -998,6 +1026,15 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
   const activeReservation = reservations[0];
   const deadlineExpired = product.reservableUntil ? Date.now() > new Date(product.reservableUntil).getTime() : false;
   const selectedSizeLimit = sizes.find((item) => item.size === size)?.quantity ?? null;
+
+  useEffect(() => {
+    const nextColor = colors[0] ?? "";
+    if (!colors.includes(color)) setColor(nextColor);
+  }, [product.id]);
+
+  useEffect(() => {
+    if (!sizes.some((item) => item.size === size)) setSize(sizes[0]?.size ?? "");
+  }, [product.id, color]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick((value) => value + 1), 1_000);
@@ -1018,14 +1055,14 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
     const selectedPickup = earliestPickup ?? pickups[0];
     const pickupLine = selectedPickup ? `${selectedPickup.address}, ${formatPickupRange(selectedPickup)}` : "Az átvételi időpontot később egyeztetjük.";
     const confirmed = window.confirm(
-      `Kérjük, csak akkor erősítsd meg a foglalást, ha biztosan át tudod venni a terméket.\n\nTermék: ${customerProductTitle(product)}\nMéret: ${size}\nDarabszám: ${quantity} db\nÁtvétel: ${pickupLine}\n\nMegerősíted a foglalást?`
+      `Kérjük, csak akkor erősítsd meg a foglalást, ha biztosan át tudod venni a terméket.\n\nTermék: ${customerProductTitle(product)}${colors.length ? `\nSzín: ${color}` : ""}\nMéret: ${size}\nDarabszám: ${quantity} db\nÁtvétel: ${pickupLine}\n\nMegerősíted a foglalást?`
     );
     if (!confirmed) return;
     setBusy(true);
     try {
       await api("/api/reservations", {
         method: "POST",
-        body: JSON.stringify({ product_id: product.id, size, pickup_id: selectedPickup?.id ?? null, quantity })
+        body: JSON.stringify({ product_id: product.id, color: colors.length ? color : null, size, pickup_id: selectedPickup?.id ?? null, quantity })
       });
       await onReserved();
     } catch (err) {
@@ -1059,9 +1096,15 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
             <em>db</em>
           </div>
           {activeReservation ? (
-            <p className="reserved own-reservation">Saját foglalás: {activeReservation.size}, átvétel: {pickupRangeText(activeReservation.pickup)}</p>
+            <p className="reserved own-reservation">Saját foglalás: {activeReservation.color ? `${activeReservation.color}, ` : ""}{activeReservation.size}, átvétel: {pickupRangeText(activeReservation.pickup)}</p>
           ) : (
           <div className="reserve-size-panel">
+            {colors.length > 0 && <label>
+              Szín
+              <select value={color} onChange={(event) => setColor(event.target.value)}>
+                {colors.map((item) => <option value={item} key={item}>{item}</option>)}
+              </select>
+            </label>}
             <label>
               Méret
               <select value={size} onChange={(event) => setSize(event.target.value)}>
@@ -1075,7 +1118,7 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
             <ShoppingBag size={18} /> {deadlineExpired ? "A foglalási határidő lejárt" : activeReservation ? "Már lefoglalva" : selectedSizeLimit === 0 ? "Ez a méret elfogyott" : "Lefoglalom személyes átvételre"}
           </button>
           <div className="detail-facts">
-            <div><span>Elérhető Méretek:</span><strong className="detail-fact-value">{sizes.map((s) => s.size).join(", ")}</strong></div>
+            <div><span>Elérhető méretek:</span><strong className="detail-fact-value"><ProductSizeList product={product} /></strong></div>
             <div><span>Foglalható eddig:</span><strong className={isDeadlineUrgent(product.reservableUntil) ? "urgent" : ""}>{tick >= 0 ? formatRemaining(product.reservableUntil) : ""}</strong></div>
             <div><span>Várható szállítás:</span><strong className="detail-fact-value">{formatDateOnly(earliestPickup?.startAt)}</strong></div>
           </div>
@@ -1340,14 +1383,51 @@ function sizeQuantityPayload(sizes: string[], quantities: Record<string, string>
   );
 }
 
+type ColorVariantForm = {
+  color: string;
+  sizes: string[];
+  quantities: Record<string, string>;
+};
+
+function colorVariantPayload(variants: ColorVariantForm[]) {
+  return variants.map((variant) => ({
+    color: variant.color.trim(),
+    sizes: variant.sizes.map((size) => ({
+      size,
+      quantity: variant.quantities[size]?.trim() ? Number(variant.quantities[size]) : null
+    }))
+  }));
+}
+
 function productFormError(form: {
   price: string;
   available_sizes: string[];
   size_quantities: Record<string, string>;
+  color_variants?: ColorVariantForm[];
 }) {
   if (!form.price.trim()) return "Az ár megadása kötelező.";
   const price = Number(form.price);
   if (!Number.isFinite(price) || price <= 0) return "Az ár nullánál nagyobb szám legyen.";
+  const variants = form.color_variants ?? [];
+  if (variants.length) {
+    const usedColors = new Set<string>();
+    for (const variant of variants) {
+      const color = variant.color.trim();
+      if (!color) return "Minden színváltozatnak adj nevet.";
+      const normalized = color.toLocaleLowerCase("hu-HU");
+      if (usedColors.has(normalized)) return "Egy színt csak egyszer adj meg.";
+      usedColors.add(normalized);
+      if (!variant.sizes.length) return `A(z) ${color} színhez legalább egy méretet válassz ki.`;
+      const invalidQuantity = variant.sizes.find((size) => {
+        const value = variant.quantities[size]?.trim();
+        if (!value) return false;
+        const quantity = Number(value);
+        return !Number.isInteger(quantity) || quantity < 0;
+      });
+      if (invalidQuantity) return `${color} / ${invalidQuantity} méretnél a maximum darabszám 0 vagy annál nagyobb egész szám legyen.`;
+    }
+    return "";
+  }
   if (!form.available_sizes.length) return "Legalább egy méretet válassz ki.";
   const invalidQuantity = form.available_sizes.find((size) => {
     const value = form.size_quantities[size]?.trim();
@@ -1555,6 +1635,7 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
     price: "",
     available_sizes: [] as string[],
     size_quantities: {} as Record<string, string>,
+    color_variants: [] as ColorVariantForm[],
     category: "",
     description: "",
     reservable_until: "",
@@ -1590,7 +1671,9 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
           product_name: form.product_name || null,
           price: Number(form.price),
           category: form.category || null,
-          size_quantities: sizeQuantityPayload(form.available_sizes, form.size_quantities),
+          available_sizes: form.color_variants.length ? [] : form.available_sizes,
+          size_quantities: form.color_variants.length ? {} : sizeQuantityPayload(form.available_sizes, form.size_quantities),
+          color_variants: form.color_variants.length ? colorVariantPayload(form.color_variants) : undefined,
           reservable_until: form.no_expiry || !form.reservable_until ? null : new Date(form.reservable_until).toISOString(),
           reservable_duration_hours: form.no_expiry || form.reservable_until ? null : Number(form.reservable_duration_hours)
         })
@@ -1647,12 +1730,21 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
           <Text label="Product ID" value={form.product_id} onChange={(product_id) => setForm({ ...form, product_id })} />
           <Text label="Termék megnevezése" value={form.product_name} onChange={(product_name) => setForm({ ...form, product_name })} />
           <Text label="Ár (Ft)" type="number" value={form.price} onChange={(price) => setForm({ ...form, price })} />
-          <SizePicker value={form.available_sizes} onChange={(available_sizes) => setForm({ ...form, available_sizes })} />
-          <SizeQuantityFields
-            sizes={form.available_sizes}
-            quantities={form.size_quantities}
-            onChange={(size, quantity) => setForm({ ...form, size_quantities: { ...form.size_quantities, [size]: quantity } })}
-          />
+          {form.color_variants.length ? (
+            <ColorVariantFields variants={form.color_variants} onChange={(color_variants) => setForm({ ...form, color_variants })} />
+          ) : (
+            <>
+              <SizePicker value={form.available_sizes} onChange={(available_sizes) => setForm({ ...form, available_sizes })} />
+              <SizeQuantityFields
+                sizes={form.available_sizes}
+                quantities={form.size_quantities}
+                onChange={(size, quantity) => setForm({ ...form, size_quantities: { ...form.size_quantities, [size]: quantity } })}
+              />
+              <button className="secondary icon-text color-mode-button" type="button" onClick={() => setForm({ ...form, available_sizes: [], size_quantities: {}, color_variants: [{ color: "", sizes: [], quantities: {} }] })}>
+                <Plus size={18} /> Színenkénti méretek és készlet megadása
+              </button>
+            </>
+          )}
           <CategoryPicker value={form.category} onChange={(category) => setForm({ ...form, category })} />
           <ReservationDeadlinePicker
             durationHours={form.reservable_duration_hours}
@@ -1682,7 +1774,7 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
               <dt>Termék megnevezése</dt><dd>{product.productName || "-"}</dd>
               <dt>Publikus sorszám</dt><dd>Honlapra megosztáskor kapja meg.</dd>
               <dt>Ár</dt><dd>{formatHuf(product.price)}</dd>
-              <dt>Méretek</dt><dd>{product.sizes.map((s) => `${s.size}${s.quantity != null ? ` (${s.quantity} db)` : ""}`).join("; ")}</dd>
+              <dt>Méretek</dt><dd>{formatProductSizes(product, true)}</dd>
             </dl>
             <div className="button-row">
               <button className="secondary" onClick={() => setStep("data")}>Adatok módosítása</button>
@@ -1816,6 +1908,41 @@ function SizeQuantityFields({ sizes, quantities, onChange }: {
           </label>
         ))}
       </div>
+    </fieldset>
+  );
+}
+
+function ColorVariantFields({ variants, onChange }: { variants: ColorVariantForm[]; onChange: (variants: ColorVariantForm[]) => void }) {
+  function update(index: number, next: Partial<ColorVariantForm>) {
+    onChange(variants.map((variant, variantIndex) => variantIndex === index ? { ...variant, ...next } : variant));
+  }
+
+  return (
+    <fieldset className="color-variant-fields wide">
+      <legend>Színenkénti méretek és készlet</legend>
+      <p>Színváltozat esetén a méreteket és a darabszámot színenként add meg. Az üres darabszám korlátlan készletet jelent.</p>
+      {variants.map((variant, index) => (
+        <section className="color-variant-card" key={index}>
+          <div className="color-variant-head">
+            <label>
+              Szín megnevezése
+              <input value={variant.color} onChange={(event) => update(index, { color: event.target.value })} placeholder="Például bordó" />
+            </label>
+            <button className="danger icon-text" type="button" onClick={() => onChange(variants.filter((_, variantIndex) => variantIndex !== index))}>
+              <Trash2 size={17} /> Szín törlése
+            </button>
+          </div>
+          <SizePicker value={variant.sizes} onChange={(sizes) => update(index, { sizes })} />
+          <SizeQuantityFields
+            sizes={variant.sizes}
+            quantities={variant.quantities}
+            onChange={(size, quantity) => update(index, { quantities: { ...variant.quantities, [size]: quantity } })}
+          />
+        </section>
+      ))}
+      <button className="secondary icon-text color-variant-add" type="button" onClick={() => onChange([...variants, { color: "", sizes: [], quantities: {} }])}>
+        <Plus size={18} /> Új szín hozzáadása
+      </button>
     </fieldset>
   );
 }
@@ -2076,7 +2203,7 @@ function AiQueueCard({ product, selectedImageIds, busy, onToggleImage, onFemale,
       {open && <div className="publish-panel">
         <h2>#{product.displayNumber}</h2>
         <p className="status-note">Koppints egy képre a kihagyásához; a beszürkült képek nem kerülnek AI-generálásra. Az Egyéb képek csak a galériában maradnak meg.</p>
-        <dl><dt>Product ID</dt><dd>{product.productId}</dd><dt>Ár</dt><dd>{formatHuf(product.price)}</dd><dt>Méretek</dt><dd>{product.sizes.map((size) => size.size).join("; ")}</dd></dl>
+        <dl><dt>Product ID</dt><dd>{product.productId}</dd><dt>Ár</dt><dd>{formatHuf(product.price)}</dd><dt>Méretek</dt><dd>{formatProductSizes(product)}</dd></dl>
         <div className="big-action-grid">
           <button className="primary icon-text" disabled={busy} onClick={onFemale}><Sparkles size={20} /> AI-generálás (Nő)</button>
           <button className="secondary icon-text" disabled={busy} onClick={onMale}><Sparkles size={20} /> AI-generálás (Férfi)</button>
@@ -2318,7 +2445,7 @@ function ShareCard({ product, variant, busy, onDownload, onWebsite, onSendToAi, 
           <dt>Product ID</dt><dd>{product.productId}</dd>
           <dt>Megnevezés</dt><dd>{product.productName || "-"}</dd>
           <dt>Ár</dt><dd>{formatHuf(product.price)}</dd>
-          <dt>Méretek</dt><dd>{product.sizes.map((s) => s.size).join("; ")}</dd>
+          <dt>Méretek</dt><dd>{formatProductSizes(product)}</dd>
           <dt>Állapot</dt><dd>{product.status === "APPROVED" ? "Honlapon" : "Nincs honlapon"}</dd>
         </dl>
         <div className="big-action-grid">
@@ -2337,12 +2464,21 @@ function ShareCard({ product, variant, busy, onDownload, onWebsite, onSendToAi, 
 }
 
 function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () => void }) {
+  const initialColorVariants = productColors(product).map((color) => {
+    const sizes = sortedProductSizes(product, color);
+    return {
+      color,
+      sizes: sizes.map((size) => size.size),
+      quantities: Object.fromEntries(sizes.map((size) => [size.size, size.quantity == null ? "" : String(size.quantity)])) as Record<string, string>
+    };
+  });
   const [form, setForm] = useState({
     product_id: product.productId,
     product_name: product.productName ?? "",
     price: String(product.price),
-    available_sizes: product.sizes.map((size) => size.size),
-    size_quantities: Object.fromEntries(product.sizes.map((size) => [size.size, size.quantity == null ? "" : String(size.quantity)])) as Record<string, string>,
+    available_sizes: initialColorVariants.length ? [] : product.sizes.map((size) => size.size),
+    size_quantities: initialColorVariants.length ? {} : Object.fromEntries(product.sizes.map((size) => [size.size, size.quantity == null ? "" : String(size.quantity)])) as Record<string, string>,
+    color_variants: initialColorVariants,
     category: product.category ?? "",
     description: product.description ?? "",
     reservable_until: toLocalDateTimeInput(product.reservableUntil),
@@ -2364,8 +2500,9 @@ function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () =
           product_id: form.product_id,
           product_name: form.product_name || null,
           price: Number(form.price),
-          available_sizes: form.available_sizes,
-          size_quantities: sizeQuantityPayload(form.available_sizes, form.size_quantities),
+          available_sizes: form.color_variants.length ? [] : form.available_sizes,
+          size_quantities: form.color_variants.length ? {} : sizeQuantityPayload(form.available_sizes, form.size_quantities),
+          color_variants: form.color_variants.length ? colorVariantPayload(form.color_variants) : undefined,
           category: form.category || null,
           description: form.description || null,
           reservable_until: form.no_expiry || !form.reservable_until ? null : new Date(form.reservable_until).toISOString(),
@@ -2386,12 +2523,21 @@ function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () =
       <Text label="Product ID" value={form.product_id} onChange={(product_id) => setForm({ ...form, product_id })} />
       <Text label="Termék megnevezése" value={form.product_name} onChange={(product_name) => setForm({ ...form, product_name })} />
       <Text label="Ár (Ft)" type="number" value={form.price} onChange={(price) => setForm({ ...form, price })} />
-      <SizePicker value={form.available_sizes} onChange={(available_sizes) => setForm({ ...form, available_sizes })} />
-      <SizeQuantityFields
-        sizes={form.available_sizes}
-        quantities={form.size_quantities}
-        onChange={(size, quantity) => setForm({ ...form, size_quantities: { ...form.size_quantities, [size]: quantity } })}
-      />
+      {form.color_variants.length ? (
+        <ColorVariantFields variants={form.color_variants} onChange={(color_variants) => setForm({ ...form, color_variants })} />
+      ) : (
+        <>
+          <SizePicker value={form.available_sizes} onChange={(available_sizes) => setForm({ ...form, available_sizes })} />
+          <SizeQuantityFields
+            sizes={form.available_sizes}
+            quantities={form.size_quantities}
+            onChange={(size, quantity) => setForm({ ...form, size_quantities: { ...form.size_quantities, [size]: quantity } })}
+          />
+          <button className="secondary icon-text color-mode-button" type="button" onClick={() => setForm({ ...form, available_sizes: [], size_quantities: {}, color_variants: [{ color: "", sizes: [], quantities: {} }] })}>
+            <Plus size={18} /> Színenkénti méretek és készlet megadása
+          </button>
+        </>
+      )}
       <CategoryPicker value={form.category} onChange={(category) => setForm({ ...form, category })} />
       <label className="checkbox-line wide">
         <input
@@ -2535,7 +2681,7 @@ function CurrentOfferings() {
                       <td>#{product.displayNumber}</td>
                       <td>{product.productName || "-"}</td>
                       <td>{formatHuf(product.price)}</td>
-                      <td>{product.sizes.map((s) => s.size).join("; ")}</td>
+                      <td>{formatProductSizes(product)}</td>
                       <td>{product.category || "-"}</td>
                       <td>{formatReservationDeadline(product.reservableUntil)}</td>
                       <td>{reservedCount} db</td>
@@ -2543,7 +2689,7 @@ function CurrentOfferings() {
                         {productReservations.length ? (
                           <div className="reservation-mini-list">
                             {productReservations.map((reservation) => (
-                              <span key={reservation.id}>{reservation.user?.username ?? "-"}: {reservation.quantity} db ({reservation.size})</span>
+                              <span key={reservation.id}>{reservation.user?.username ?? "-"}: {reservation.quantity} db ({reservation.color ? `${reservation.color}, ` : ""}{reservation.size})</span>
                             ))}
                           </div>
                         ) : "-"}
@@ -2633,7 +2779,7 @@ function DeletedProducts() {
                       <td>{product.productId}</td>
                       <td>{product.productName || "-"}</td>
                       <td>{formatHuf(product.price)}</td>
-                      <td>{product.sizes.map((s) => s.size).join("; ")}</td>
+                      <td>{formatProductSizes(product)}</td>
                       <td>{product.category || "-"}</td>
                       <td><div className="table-actions">
                         <button className="secondary table-action-btn" onClick={() => setEditingId(editingId === product.id ? null : product.id)}>Képek</button>
@@ -2901,8 +3047,8 @@ function Orders() {
     }
   }
 
-  function procurementKey(product: Product, size: string) {
-    return `${product.id}:${size}`;
+  function procurementKey(product: Product, size: string, color?: string | null) {
+    return `${product.id}:${color ?? "-"}:${size}`;
   }
 
   function togglePurchasedProcurementItem(key: string) {
@@ -2945,13 +3091,13 @@ function Orders() {
 
   function procurementGroupsFor(source: Reservation[]) {
     return Array.from(source.reduce((groups, reservation) => {
-      const key = procurementKey(reservation.product, reservation.size);
-      const group = groups.get(key) ?? { product: reservation.product, size: reservation.size, quantity: 0, reservations: [] as Reservation[] };
+      const key = procurementKey(reservation.product, reservation.size, reservation.color);
+      const group = groups.get(key) ?? { product: reservation.product, color: reservation.color ?? null, size: reservation.size, quantity: 0, reservations: [] as Reservation[] };
       group.quantity += reservation.quantity;
       group.reservations.push(reservation);
       groups.set(key, group);
       return groups;
-    }, new Map<string, { product: Product; size: string; quantity: number; reservations: Reservation[] }>()).values());
+    }, new Map<string, { product: Product; color: string | null; size: string; quantity: number; reservations: Reservation[] }>()).values());
   }
 
   function reservationsByUserFor(source: Reservation[]) {
@@ -2984,10 +3130,10 @@ function Orders() {
         group.product.productId,
         `#${group.product.displayNumber}`,
         productTitle(group.product),
-        group.size,
+        group.color ? `${group.color}, ${group.size}` : group.size,
         `${group.quantity} db`,
         [`Összesen: ${group.quantity} db`, ...group.reservations.map((reservation) => `${reservation.quantity} db - ${reservation.user?.username ?? "-"}`)].join(" | "),
-        purchasedProcurementKeys.includes(procurementKey(group.product, group.size)) ? "Igen" : ""
+        purchasedProcurementKeys.includes(procurementKey(group.product, group.size, group.color)) ? "Igen" : ""
       ]),
       [],
       ["Rendelések termék szerint"],
@@ -2996,7 +3142,7 @@ function Orders() {
         group.product.productId,
         `#${group.product.displayNumber}`,
         productTitle(group.product),
-        group.size,
+        group.color ? `${group.color}, ${group.size}` : group.size,
         `${group.quantity} db`,
         group.reservations.map((reservation) => `${reservation.user?.username ?? "-"} - ${formatDateTime(reservation.reservedAt)}`).join(" | "),
         group.reservations.map((reservation) => reservationStatusLabels[reservation.status]).join(" | ")
@@ -3006,7 +3152,7 @@ function Orders() {
       ["Felhasználó", "Rendelések", "Összes darab", "Fizetendő", "Státusz"],
       ...exportReservationsByUser.map((group) => [
         group.username,
-        group.reservations.map((reservation) => `${productNumberPair(reservation.product)} / ${productTitle(reservation.product)} / ${reservation.size} / ${reservation.quantity} db`).join(" | "),
+        group.reservations.map((reservation) => `${productNumberPair(reservation.product)} / ${productTitle(reservation.product)} / ${reservation.color ? `${reservation.color}, ` : ""}${reservation.size} / ${reservation.quantity} db`).join(" | "),
         `${group.quantity} db`,
         group.amount,
         group.reservations.map((reservation) => customerFulfillmentStatusLabels[reservation.status]).join(" | ")
@@ -3071,7 +3217,7 @@ function Orders() {
             </thead>
             <tbody>
               {procurementGroups.length ? procurementGroups.map((group) => {
-                const key = procurementKey(group.product, group.size);
+                const key = procurementKey(group.product, group.size, group.color);
                 const image = productDisplayImage(group.product);
                 return (
                   <tr key={key}>
@@ -3079,7 +3225,7 @@ function Orders() {
                     <td>#{group.product.displayNumber}</td>
                     <td>{image ? <img className="table-thumb" src={imageUrl(image)} alt={`Vásárlandó termék ${group.product.displayNumber}`} /> : "-"}</td>
                     <td>{productTitle(group.product)}</td>
-                    <td>{group.size}</td>
+                    <td>{group.color ? `${group.color}, ${group.size}` : group.size}</td>
                     <td><strong>{group.quantity} db</strong></td>
                     <td>
                       <div className="order-lines">
@@ -3090,7 +3236,7 @@ function Orders() {
                       </div>
                     </td>
                     <td>
-                      <label className="table-checkbox" aria-label={`${productNumberPair(group.product)} ${group.size} megvéve`}>
+                      <label className="table-checkbox" aria-label={`${productNumberPair(group.product)} ${group.color ? `${group.color}, ` : ""}${group.size} megvéve`}>
                         <input type="checkbox" checked={purchasedProcurementKeys.includes(key)} onChange={() => togglePurchasedProcurementItem(key)} />
                       </label>
                     </td>
@@ -3129,7 +3275,7 @@ function Orders() {
                     <td>{group.product.productId}</td>
                     <td>#{group.product.displayNumber}</td>
                     <td>{image ? <img className="table-thumb" src={imageUrl(image)} alt={`Rendelt termék ${group.product.displayNumber}`} /> : "-"}</td>
-                    <td>{group.size}</td>
+                    <td>{group.color ? `${group.color}, ${group.size}` : group.size}</td>
                     <td><strong>{group.quantity} db</strong></td>
                     <td>
                       <div className="order-lines">
@@ -3187,7 +3333,7 @@ function Orders() {
                   <td>
                     <div className="order-lines">
                       {group.reservations.map((reservation) => (
-                        <span key={reservation.id}>{productNumberPair(reservation.product)} | {productTitle(reservation.product)} | {reservation.size} | {reservation.quantity} db</span>
+                        <span key={reservation.id}>{productNumberPair(reservation.product)} | {productTitle(reservation.product)} | {reservation.color ? `${reservation.color}, ` : ""}{reservation.size} | {reservation.quantity} db</span>
                       ))}
                     </div>
                   </td>
@@ -3285,7 +3431,7 @@ function PickupSettings() {
         reservation.user?.username ?? "-",
         `#${reservation.product.displayNumber}`,
         productTitle(reservation.product),
-        reservation.size,
+        reservation.color ? `${reservation.color}, ${reservation.size}` : reservation.size,
         reservation.quantity,
         reservation.product.price,
         pickupAddress(reservation.pickup),
@@ -3377,7 +3523,7 @@ function PickupSettings() {
                       <tr key={reservation.id}>
                         <td>{reservation.user?.username ?? "-"}</td>
                         <td>{productTitle(reservation.product)}</td>
-                        <td>{reservation.size}</td>
+                        <td>{reservation.color ? `${reservation.color}, ${reservation.size}` : reservation.size}</td>
                         <td>{reservation.quantity} db</td>
                         <td>{formatHuf(reservation.product.price)}</td>
                         <td>{pickupAddress(reservation.pickup)}</td>
@@ -3402,7 +3548,7 @@ function ProductCard({ product, onDeleted }: { product: Product; onDeleted: () =
   const final = useMemo(() => [...product.images].reverse().find((img) => img.imageType === "FINAL"), [product]);
   const url = imageUrl(final);
   async function share() {
-    const text = `#${product.displayNumber} - ${formatHuf(product.price)}\nMéretek: ${product.sizes.map((s) => s.size).join("; ")}`;
+    const text = `#${product.displayNumber} - ${formatHuf(product.price)}\nMéretek: ${formatProductSizes(product)}`;
     if (navigator.share) {
       await navigator.share({ title: `Termék ${product.displayNumber}`, text, url });
     } else {
@@ -3420,7 +3566,7 @@ function ProductCard({ product, onDeleted }: { product: Product; onDeleted: () =
         <strong>#{product.displayNumber}</strong>
         <span>{product.productId}</span>
       </div>
-      <p>{formatHuf(product.price)} · {product.sizes.map((s) => s.size).join("; ")}</p>
+      <p>{formatHuf(product.price)} · {formatProductSizes(product)}</p>
       <time>{new Date(product.createdAt).toLocaleDateString("hu-HU")}</time>
       <div className="button-row">
         <a className="button icon-text" href={url} target="_blank"><FolderCheck size={18} /> Megtekintés</a>

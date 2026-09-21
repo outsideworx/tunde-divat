@@ -1,6 +1,6 @@
 import { Router } from "express";
 import multer from "multer";
-import { bulkReservationDeadlinePayloadSchema, generationPayloadSchema, imageViewTypes, productPayloadSchema } from "@fashion-mvp/shared";
+import { bulkReservationDeadlinePayloadSchema, generationPayloadSchema, imageViewTypes, productPayloadSchema, productUpdatePayloadSchema } from "@fashion-mvp/shared";
 import { env } from "../config/env.js";
 import { requireAdmin, requireAuth } from "../middleware/auth.js";
 import { generationLimiter, uploadLimiter } from "../middleware/rateLimiters.js";
@@ -94,7 +94,7 @@ productRoutes.get(
 productRoutes.put(
   "/:id",
   asyncHandler(async (req, res) => {
-    const payload = productPayloadSchema.partial().parse(req.body);
+    const payload = productUpdatePayloadSchema.parse(req.body);
     res.json({ product: await products.update(Number(req.params.id), payload) });
   })
 );

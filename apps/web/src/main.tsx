@@ -80,6 +80,7 @@ type AuthMode = "login" | "register";
 type StoreView = "catalog" | "reservations" | "favorites";
 type ShareVariant = "raw" | "generated" | "multi";
 type ModelGender = "female" | "male";
+type ReservationSelection = { id: number; color: string; size: string; quantity: number };
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
@@ -554,7 +555,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
 
   return (
     <main className="auth-shell">
-      <span className="build-version">ver.: 1.04</span>
+      <span className="build-version">ver.: 1.05</span>
       <section className="brand-panel">
         <span className="sr-only">Tünde Divat Online</span>
       </section>
@@ -785,7 +786,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
               await loadStoreData();
             }}
             onCancel={async (reservation) => {
-              const confirmed = window.confirm("Biztosan lemondod ezt a foglalást? Foglalás után erre csak 10 percig van lehetőség, és ha ugyanezt a terméket később újra lefoglalod, azt már nem fogod tudni lemondani.");
+              const confirmed = window.confirm("Biztosan lemondod ezt a foglalást? Az adott foglalást a rögzítésétől számított 10 percen belül lehet lemondani.");
               if (!confirmed) return;
               await api(`/api/reservations/${reservation.id}`, { method: "DELETE" });
               setMessage("A foglalást lemondtuk.");
@@ -936,7 +937,9 @@ function ReservationsPage({ reservations, pickups, tick, onBackToCatalog, onUpda
             <tr>
               <th>Terméknév</th>
               <th>Kép</th>
+              <th>Darabszám</th>
               <th>Méret</th>
+              <th>Szín</th>
               <th>Fizetendő</th>
               <th>Átvétel helye</th>
               <th>Átvétel ideje</th>
@@ -958,7 +961,9 @@ function ReservationsPage({ reservations, pickups, tick, onBackToCatalog, onUpda
                       </button>
                     ) : "-"}
                   </td>
-                  <td>{reservation.color ? `${reservation.color}, ` : ""}{reservation.size}</td>
+                  <td>{reservation.quantity} db</td>
+                  <td>{reservation.size}</td>
+                  <td>{reservation.color || "-"}</td>
                   <td>{formatHuf(reservation.product.price * reservation.quantity)}</td>
                   <td>{pickupAddress(reservation.pickup)}</td>
                   <td>{pickupRangeText(reservation.pickup)}</td>
@@ -989,7 +994,7 @@ function ReservationsPage({ reservations, pickups, tick, onBackToCatalog, onUpda
               );
             }) : (
               <tr>
-                <td colSpan={8} className="empty-table-cell">Még nincs foglalásod.</td>
+                <td colSpan={10} className="empty-table-cell">Még nincs foglalásod.</td>
               </tr>
             )}
           </tbody>
@@ -1008,7 +1013,9 @@ function ReservationsPage({ reservations, pickups, tick, onBackToCatalog, onUpda
               </div>
             </header>
             <dl>
-              <div><dt>Méret</dt><dd>{reservation.color ? `${reservation.color}, ` : ""}{reservation.size} | {reservation.quantity} db</dd></div>
+              <div><dt>Darabszám</dt><dd>{reservation.quantity} db</dd></div>
+              <div><dt>Méret</dt><dd>{reservation.size}</dd></div>
+              <div><dt>Szín</dt><dd>{reservation.color || "-"}</dd></div>
               <div><dt>Átvétel helye</dt><dd>{pickupAddress(reservation.pickup)}</dd></div>
               <div><dt>Átvétel ideje</dt><dd>{pickupRangeText(reservation.pickup)}</dd></div>
               <div><dt>Lemondható eddig</dt><dd className="reservation-cancel-actions"><span className={canCancelReservation(reservation) ? "cancel-countdown" : "cancel-countdown expired"}>{tick >= 0 ? formatCancelRemaining(reservation) : ""}</span><button className={`reservation-cancel-button ${canCancelReservation(reservation) ? "is-cancellable" : "is-locked"}`} disabled={!canCancelReservation(reservation)} onClick={() => void onCancel(reservation)}>{canCancelReservation(reservation) ? "Foglalás lemondása" : "Foglalás már nem lemondható"}</button></dd></div>
@@ -1075,55 +1082,87 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
   const [galleryIndex, setGalleryIndex] = useState(0);
   const displayImage = galleryImages[galleryIndex] ?? productDisplayImage(product);
   const colors = productColors(product);
-  const [color, setColor] = useState(colors[0] ?? "");
-  const sizes = sortedProductSizes(product, colors.length ? color : undefined);
-  const [size, setSize] = useState(sizes[0]?.size ?? "");
-  const [quantity, setQuantity] = useState(1);
+  const [selections, setSelections] = useState<ReservationSelection[]>(() => {
+    const color = colors[0] ?? "";
+    return [{ id: 1, color, size: sortedProductSizes(product, colors.length ? color : undefined)[0]?.size ?? "", quantity: 1 }];
+  });
+  const nextSelectionId = useRef(2);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [tick, setTick] = useState(0);
   const [editing, setEditing] = useState(false);
-  const activeReservation = reservations[0];
   const deadlineExpired = product.reservableUntil ? Date.now() > new Date(product.reservableUntil).getTime() : false;
-  const selectedSizeLimit = sizes.find((item) => item.size === size)?.quantity ?? null;
 
   useEffect(() => {
-    const nextColor = colors[0] ?? "";
-    if (!colors.includes(color)) setColor(nextColor);
+    const color = colors[0] ?? "";
+    const size = sortedProductSizes(product, colors.length ? color : undefined)[0]?.size ?? "";
+    nextSelectionId.current = 2;
+    setSelections([{ id: 1, color, size, quantity: 1 }]);
   }, [product.id]);
-
-  useEffect(() => {
-    if (!sizes.some((item) => item.size === size)) setSize(sizes[0]?.size ?? "");
-  }, [product.id, color]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick((value) => value + 1), 1_000);
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    if (selectedSizeLimit !== null && quantity > selectedSizeLimit) {
-      setQuantity(Math.max(1, selectedSizeLimit));
-    }
-  }, [quantity, selectedSizeLimit]);
+
+  function sizesForSelection(selection: ReservationSelection) {
+    return sortedProductSizes(product, colors.length ? selection.color : undefined);
+  }
+
+  function sizeLimit(selection: ReservationSelection) {
+    return sizesForSelection(selection).find((item) => item.size === selection.size)?.quantity ?? null;
+  }
+
+  function updateSelection(id: number, next: Partial<ReservationSelection>) {
+    setSelections((current) => current.map((selection) => {
+      if (selection.id !== id) return selection;
+      const updated = { ...selection, ...next };
+      if (next.color !== undefined) updated.size = sortedProductSizes(product, colors.length ? updated.color : undefined)[0]?.size ?? "";
+      const limit = sizeLimit(updated);
+      if (limit !== null && updated.quantity > limit) updated.quantity = Math.max(1, limit);
+      return updated;
+    }));
+  }
+
+  function addSelection() {
+    const color = colors[0] ?? "";
+    const size = sortedProductSizes(product, colors.length ? color : undefined)[0]?.size ?? "";
+    setSelections((current) => [...current, { id: nextSelectionId.current++, color, size, quantity: 1 }]);
+  }
+
+  const reservationTotal = selections.reduce((total, selection) => total + selection.quantity * product.price, 0);
+  const existingReservations = reservations.filter((reservation) => !reservation.cancelledAt && !reservation.fulfilledAt);
 
   async function reserve() {
     setError("");
-    if (!size) return setError("Válassz méretet a foglaláshoz.");
-    if (selectedSizeLimit !== null && selectedSizeLimit <= 0) return setError("Ebből a méretből jelenleg nincs foglalható darab.");
-    if (selectedSizeLimit !== null && quantity > selectedSizeLimit) return setError(`Ebből a méretből legfeljebb ${selectedSizeLimit} db foglalható.`);
+    if (selections.some((selection) => !selection.size)) return setError("Válassz méretet minden foglalási sorban.");
+    const hasDuplicate = selections.some((selection, index) => selections.findIndex((candidate) => candidate.color === selection.color && candidate.size === selection.size) !== index);
+    if (hasDuplicate) return setError("Ugyanazt a szín- és méretváltozatot csak egyszer válaszd ki; a darabszámot azon a soron módosítsd.");
+    for (const selection of selections) {
+      const limit = sizeLimit(selection);
+      const variant = `${selection.color ? `${selection.color}, ` : ""}${selection.size}`;
+      if (limit !== null && limit <= 0) return setError(`${variant} méretből jelenleg nincs foglalható darab.`);
+      if (limit !== null && selection.quantity > limit) return setError(`${variant} méretből legfeljebb ${limit} db foglalható.`);
+    }
     const selectedPickup = earliestPickup ?? pickups[0];
     const pickupLine = selectedPickup ? `${selectedPickup.address}, ${formatPickupRange(selectedPickup)}` : "Az átvételi időpontot később egyeztetjük.";
+    const repeatSelections = selections.filter((selection) => existingReservations.some((reservation) => reservation.color === (colors.length ? selection.color || null : null) && reservation.size === selection.size));
+    if (repeatSelections.length > 0) {
+      const variants = repeatSelections.map((selection) => `${selection.color ? `${selection.color}, ` : ""}${selection.size}`).join(", ");
+      const repeatConfirmed = window.confirm(`Ebből a változatból már van leadott foglalásod: ${variants}. Biztosan további rendelést szeretnél leadni? Az új foglalás külön tételként, saját 10 perces lemondási idővel kerül rögzítésre.`);
+      if (!repeatConfirmed) return;
+    }
     const confirmed = window.confirm(
-      `Kérjük, csak akkor erősítsd meg a foglalást, ha biztosan át tudod venni a terméket.\n\nTermék: ${customerProductTitle(product)}${colors.length ? `\nSzín: ${color}` : ""}\nMéret: ${size}\nDarabszám: ${quantity} db\nÁtvétel: ${pickupLine}\n\nMegerősíted a foglalást?`
+      `Kérjük, csak akkor erősítsd meg a foglalást, ha biztosan át tudod venni a terméket.\n\nTermék: ${customerProductTitle(product)}\n${selections.map((selection) => `${selection.color ? `${selection.color}, ` : ""}${selection.size}: ${selection.quantity} db`).join("\n")}\nFizetendő: ${formatHuf(reservationTotal)}\nÁtvétel: ${pickupLine}\n\nMegerősíted a foglalást?`
     );
     if (!confirmed) return;
     setBusy(true);
     try {
-      await api("/api/reservations", {
+      await Promise.all(selections.map((selection) => api("/api/reservations", {
         method: "POST",
-        body: JSON.stringify({ product_id: product.id, color: colors.length ? color : null, size, pickup_id: selectedPickup?.id ?? null, quantity })
-      });
+        body: JSON.stringify({ product_id: product.id, color: colors.length ? selection.color : null, size: selection.size, pickup_id: selectedPickup?.id ?? null, quantity: selection.quantity })
+      })));
       await onReserved();
     } catch (err) {
       setError(err instanceof Error ? err.message : "A foglalás sikertelen.");
@@ -1165,34 +1204,48 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
             <span>Foglalható eddig:</span>
             <strong className={isDeadlineUrgent(product.reservableUntil) ? "urgent" : ""}>{tick >= 0 ? formatDetailRemaining(product.reservableUntil) : ""}</strong>
           </div>
-            <div className="quantity-row">
-              <button onClick={() => setQuantity((value) => Math.max(1, value - 1))}>-</button>
-              <span>{quantity}</span>
-            <button disabled={selectedSizeLimit !== null && quantity >= selectedSizeLimit} onClick={() => setQuantity((value) => value + 1)}>+</button>
-            <em>db</em>
-          </div>
-          {activeReservation ? (
-            <p className="reserved own-reservation">Saját foglalás: {activeReservation.color ? `${activeReservation.color}, ` : ""}{activeReservation.size}, átvétel: {pickupRangeText(activeReservation.pickup)}</p>
-          ) : (
           <div className="reserve-size-panel">
-            {colors.length > 0 && <label>
-              Szín
-              <select value={color} onChange={(event) => setColor(event.target.value)}>
-                {colors.map((item) => <option value={item} key={item}>{item}</option>)}
-              </select>
-            </label>}
-            <label>
-              Méret
-              <select value={size} onChange={(event) => setSize(event.target.value)}>
-                {sizes.map((item) => <option value={item.size} key={item.size}>{item.size}{item.quantity != null ? ` - max. ${item.quantity} db` : ""}</option>)}
-              </select>
-            </label>
+            {selections.map((selection, index) => {
+              const sizes = sizesForSelection(selection);
+              const limit = sizeLimit(selection);
+              return <section className="reservation-selection" key={selection.id}>
+                {selections.length > 1 && <div className="reservation-selection-heading"><strong>{index + 1}. választás</strong><button className="ghost" onClick={() => setSelections((current) => current.filter((item) => item.id !== selection.id))}>Eltávolítás</button></div>}
+                {colors.length > 0 && <label>
+                  Szín
+                  <select value={selection.color} onChange={(event) => updateSelection(selection.id, { color: event.target.value })}>
+                    {colors.map((item) => <option value={item} key={item}>{item}</option>)}
+                  </select>
+                </label>}
+                <label>
+                  Méret
+                  <select value={selection.size} onChange={(event) => updateSelection(selection.id, { size: event.target.value })}>
+                    {sizes.map((item) => <option value={item.size} key={item.size}>{item.size}{item.quantity != null ? ` - max. ${item.quantity} db` : ""}</option>)}
+                  </select>
+                </label>
+                <label className="quantity-control">
+                  Darabszám
+                  <select value={selection.quantity} onChange={(event) => updateSelection(selection.id, { quantity: Number(event.target.value) })}>
+                    {Array.from({ length: Math.max(1, Math.min(limit ?? 20, 20)) }, (_, amount) => amount + 1).map((amount) => <option value={amount} key={amount}>{amount} db</option>)}
+                  </select>
+                </label>
+              </section>;
+            })}
+            <button className="secondary icon-text additional-reservation-choice" onClick={addSelection}><Plus size={18} /> További szín és méret választása</button>
           </div>
-          )}
           {error && <p className="error">{error}</p>}
-          <button className="tdo-primary icon-text modal-reserve-button" disabled={busy || !!activeReservation || deadlineExpired || selectedSizeLimit === 0} onClick={reserve}>
-            <ShoppingBag size={18} /> {deadlineExpired ? "A foglalási határidő lejárt" : activeReservation ? "Már lefoglalva" : selectedSizeLimit === 0 ? "Ez a méret elfogyott" : "Lefoglalom személyes átvételre"}
+          <button className="tdo-primary icon-text modal-reserve-button" disabled={busy || deadlineExpired} onClick={reserve}>
+            <ShoppingBag size={18} /> {deadlineExpired ? "A foglalási határidő lejárt" : "Lefoglalom személyes átvételre"}
           </button>
+          <p className="reservation-total">Fizetendő: <strong>{formatHuf(reservationTotal)}</strong></p>
+          {existingReservations.length > 0 && <section className="existing-reservations">
+            <h3>Már leadott rendeléseim</h3>
+            <ul>
+              {existingReservations.map((reservation) => <li key={reservation.id}>
+                <span>{reservation.color ? `${reservation.color}, ` : ""}{reservation.size} | {reservation.quantity} db</span>
+                <strong>{formatHuf(reservation.product.price * reservation.quantity)}</strong>
+              </li>)}
+            </ul>
+          </section>}
           <button className={`wishlist-row ${isFavorite ? "active" : ""}`} onClick={onToggleFavorite}>
             <Heart size={24} fill={isFavorite ? "currentColor" : "none"} />
             {isFavorite ? "Hozzáadtad a kívánságlistához." : "Kívánságlistára teszem"}

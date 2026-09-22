@@ -1856,8 +1856,57 @@ tr:last-child td {
   color: var(--tdo-brand);
 }
 .product-detail .reserve-size-panel {
+  display: grid;
+  gap: 12px;
   width: min(100%, 520px);
 }
+.reservation-selection {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e1e5ea;
+  border-radius: 8px;
+  background: #fffdf9;
+}
+.reservation-selection-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #475467;
+  font-size: 15px;
+}
+.reservation-selection-heading .ghost { min-height: 34px; padding: 6px 10px; font-size: 13px; }
+.additional-reservation-choice {
+  width: fit-content;
+  border-color: #183b63;
+  background: #183b63;
+  color: #f8fbff;
+}
+.additional-reservation-choice:hover { background: #112d4c; }
+.quantity-control {
+  color: #202124;
+}
+.reservation-total {
+  width: min(100%, 520px);
+  margin: -5px 0 0;
+  color: #475467;
+  font-size: 18px;
+}
+.reservation-total strong { color: #202124; font-size: 20px; }
+.existing-reservations {
+  display: grid;
+  gap: 8px;
+  width: min(100%, 520px);
+  padding: 14px;
+  border: 1px solid #e1e5ea;
+  border-radius: 8px;
+  background: #fffdf9;
+}
+.existing-reservations h3 { margin: 0; font-size: 17px; }
+.existing-reservations ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.existing-reservations li { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; color: #475467; }
+.existing-reservations li strong { color: #202124; white-space: nowrap; }
 .product-detail .reserve-size-panel select {
   width: 100%;
   min-height: 76px;

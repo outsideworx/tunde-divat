@@ -62,7 +62,7 @@ describe("reservation gating", () => {
     expect(res.status).toBe(400);
   });
 
-  it("allows a valid reservation and then blocks a second active one (per product+user)", async () => {
+  it("allows separate repeat reservations for the same product variant", async () => {
     const first = await request(ctx.app)
       .post("/api/reservations")
       .set("Cookie", staffCookie)
@@ -74,23 +74,24 @@ describe("reservation gating", () => {
       .post("/api/reservations")
       .set("Cookie", staffCookie)
       .send({ product_id: approvedProductId, size: "M", pickup_id: pickupId });
-    expect(second.status).toBe(409);
+    expect(second.status).toBe(201);
+    expect(second.body.reservation.canCancel).toBe(true);
   });
 
-  it("marks canCancel=false when re-reserving after a cancel", async () => {
+  it("gives a new cancellation window when reserving again after a cancel", async () => {
     // Cancel the existing active reservation.
     const mine = await request(ctx.app).get("/api/reservations/my").set("Cookie", staffCookie);
     const reservationId = mine.body.reservations[0].id;
     const cancelled = await request(ctx.app).delete(`/api/reservations/${reservationId}`).set("Cookie", staffCookie);
     expect(cancelled.status).toBe(200);
 
-    // Re-reserve the same product: allowed, but no longer cancellable.
+    // Re-reserve the same product: it is a new, independently cancellable reservation.
     const again = await request(ctx.app)
       .post("/api/reservations")
       .set("Cookie", staffCookie)
       .send({ product_id: approvedProductId, size: "M", pickup_id: pickupId });
     expect(again.status).toBe(201);
-    expect(again.body.reservation.canCancel).toBe(false);
+    expect(again.body.reservation.canCancel).toBe(true);
   });
 
   it("reserves the selected color and size from a color-specific inventory", async () => {

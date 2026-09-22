@@ -77,13 +77,6 @@ export class ReservationService {
     }
     const pickup = payload.pickup_id ? await prisma.pickupOption.findUnique({ where: { id: payload.pickup_id } }) : null;
     if (payload.pickup_id && (!pickup || !pickup.isActive)) throw new AppError(400, "Válassz érvényes személyes átvételi időpontot.");
-    const alreadyReserved = await prisma.reservation.findFirst({
-      where: { productFk: product.id, userId, cancelledAt: null }
-    });
-    if (alreadyReserved) throw new AppError(409, "Ezt a terméket már lefoglaltad.");
-    const hadCancelledBefore = await prisma.reservation.findFirst({
-      where: { productFk: product.id, userId, cancelledAt: { not: null } }
-    });
     return prisma.reservation.create({
       data: {
         productFk: product.id,
@@ -92,7 +85,8 @@ export class ReservationService {
         color: selectedColor,
         size: payload.size,
         quantity: requestedQuantity,
-        canCancel: !hadCancelledBefore
+        // Every reservation is independent, including repeat orders of the same variant.
+        canCancel: true
       },
       include: includeReservation
     });

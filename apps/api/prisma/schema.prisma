@@ -148,6 +148,7 @@ model Reservation {
   canCancel   Boolean           @default(true) @map("can_cancel")
   reservedAt  DateTime          @default(now()) @map("reserved_at")
   cancelledAt DateTime?         @map("cancelled_at")
+  fulfilledAt DateTime?         @map("fulfilled_at")
 
   @@index([productFk])
   @@index([userId, cancelledAt])
@@ -181,6 +182,7 @@ model ProductImage {
   sortOrder   Int       @default(0) @map("sort_order")
   sourceImageId Int?    @map("source_image_id")
   isHidden    Boolean   @default(false) @map("is_hidden")
+  aiArchived  Boolean   @default(false) @map("ai_archived")
   viewType    ImageViewType @default(AUTO) @map("view_type")
   createdAt   DateTime  @default(now()) @map("created_at")
 

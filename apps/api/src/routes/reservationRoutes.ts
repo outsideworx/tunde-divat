@@ -24,6 +24,22 @@ reservationRoutes.get(
   })
 );
 
+reservationRoutes.get(
+  "/archive",
+  requireAdmin,
+  asyncHandler(async (_req, res) => {
+    res.json({ reservations: await reservations.archived() });
+  })
+);
+
+reservationRoutes.patch(
+  "/:id/fulfill",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    res.json({ reservation: await reservations.fulfill(Number(req.params.id)) });
+  })
+);
+
 reservationRoutes.post(
   "/",
   asyncHandler(async (req, res) => {

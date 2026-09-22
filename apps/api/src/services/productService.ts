@@ -239,8 +239,32 @@ export class ProductService {
     return prisma.productImage.update({ where: { id: imageId }, data: { isHidden } });
   }
 
+  async setImageAiArchive(id: number, imageId: number, aiArchived: boolean) {
+    const product = await this.get(id);
+    const image = product.images.find((candidate) => candidate.id === imageId && candidate.imageType === "ORIGINAL");
+    if (!image) throw new AppError(400, "Csak eredeti termékkép helyezhető az AI-archívumba.");
+    return prisma.productImage.update({ where: { id: imageId }, data: { aiArchived } });
+  }
+
+  async deleteImage(id: number, imageId: number) {
+    const product = await this.get(id);
+    const image = product.images.find((candidate) => candidate.id === imageId);
+    if (!image) throw new AppError(404, "A kép nem ehhez a termékhez tartozik.");
+    const related = product.images.filter((candidate) => candidate.id === imageId || candidate.sourceImageId === imageId);
+    await prisma.$transaction([
+      prisma.productImage.deleteMany({ where: { id: { in: related.map((candidate) => candidate.id) } } }),
+      prisma.product.update({
+        where: { id },
+        data: { displayImageId: product.displayImageId && related.some((candidate) => candidate.id === product.displayImageId) ? null : product.displayImageId }
+      })
+    ]);
+    await Promise.all(related.map((candidate) => this.storage.delete(candidate.storagePath)));
+    return this.get(id);
+  }
+
   async generate(id: number, gender: ModelGender = "female", originalImageId?: number) {
     const product = await this.ensurePublicDisplayNumber(id);
+    const statusBeforeGeneration = product.status;
     const original = originalImageId
       ? product.images.find((image) => image.id === originalImageId && image.imageType === "ORIGINAL")
       : product.images.find((image) => image.imageType === "ORIGINAL");
@@ -249,7 +273,9 @@ export class ProductService {
     const job = await prisma.generationJob.create({
       data: { productFk: id, status: "PROCESSING", provider: env.AI_PROVIDER }
     });
-    await prisma.product.update({ where: { id }, data: { status: "PROCESSING" } });
+    if (statusBeforeGeneration !== "APPROVED" && statusBeforeGeneration !== "PUBLISHED") {
+      await prisma.product.update({ where: { id }, data: { status: "PROCESSING" } });
+    }
     try {
       const originalBuffer = await this.storage.read(original.storagePath);
       const generated = await this.ai.generateMarketingBase(originalBuffer, gender, original.viewType);
@@ -271,14 +297,16 @@ export class ProductService {
         where: { id: job.id },
         data: { status: "COMPLETED", completedAt: new Date() }
       });
-      await prisma.product.update({ where: { id }, data: { status: "REVIEW" } });
+      if (statusBeforeGeneration !== "APPROVED" && statusBeforeGeneration !== "PUBLISHED") {
+        await prisma.product.update({ where: { id }, data: { status: "REVIEW" } });
+      }
       return this.get(id);
     } catch (error) {
       await prisma.generationJob.update({
         where: { id: job.id },
         data: { status: "FAILED", errorMessage: error instanceof Error ? error.message : "Generation failed", completedAt: new Date() }
       });
-      await prisma.product.update({ where: { id }, data: { status: "DRAFT" } });
+      await prisma.product.update({ where: { id }, data: { status: statusBeforeGeneration === "PROCESSING" ? "DRAFT" : statusBeforeGeneration } });
       throw new AppError(502, "AI generation failed. The product data was kept and generation can be retried.");
     }
   }

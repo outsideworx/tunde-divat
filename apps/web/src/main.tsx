@@ -24,7 +24,7 @@ function getApiBase() {
 const API = getApiBase();
 
 type ImageViewType = "FRONT" | "BACK" | "DETAIL" | "AUTO" | "OTHER";
-type ProductImage = { id: number; imageType: "ORIGINAL" | "AI_GENERATED" | "FINAL"; width?: number; height?: number; sortOrder?: number; sourceImageId?: number | null; isHidden?: boolean; viewType?: ImageViewType };
+type ProductImage = { id: number; imageType: "ORIGINAL" | "AI_GENERATED" | "FINAL"; width?: number; height?: number; sortOrder?: number; sourceImageId?: number | null; isHidden?: boolean; aiArchived?: boolean; viewType?: ImageViewType };
 type Product = {
   id: number;
   productId: string;
@@ -56,6 +56,7 @@ type Reservation = {
   canCancel: boolean;
   reservedAt: string;
   cancelledAt?: string | null;
+  fulfilledAt?: string | null;
   product: Product;
   pickup?: PickupOption | null;
   user?: { id: number; username: string; email?: string | null };
@@ -147,6 +148,11 @@ function productOriginalImage(product: Product) {
 
 function productOriginalImages(product: Product) {
   return product.images.filter((img) => img.imageType === "ORIGINAL");
+}
+
+function imageNeedsAiGeneration(product: Product, image: ProductImage) {
+  if (image.aiArchived || image.isHidden || image.viewType === "OTHER") return false;
+  return !product.images.some((candidate) => candidate.sourceImageId === image.id && (candidate.imageType === "AI_GENERATED" || candidate.imageType === "FINAL"));
 }
 
 function visibleProductOriginalImages(product: Product) {
@@ -361,6 +367,19 @@ function formatRemaining(value?: string | null) {
   const pad = (value: number) => String(value).padStart(2, "0");
   if (totalSeconds < 3_600) return `${pad(minutes)}:${pad(seconds)}`;
   return `${pad(days)}:${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
+
+function formatDetailRemaining(value?: string | null) {
+  if (!value) return "Határidő nélkül foglalható";
+  const diff = new Date(value).getTime() - Date.now();
+  if (diff <= 0) return "Lejárt";
+  const totalSeconds = Math.floor(diff / 1000);
+  const days = Math.floor(totalSeconds / 86_400);
+  const hours = Math.floor((totalSeconds % 86_400) / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return days > 0 ? `${days} nap ${pad(hours)}:${pad(minutes)}:${pad(seconds)}` : `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
 }
 
 function formatCancelRemaining(reservation: Reservation) {
@@ -737,12 +756,14 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
             reservations={reservations.filter((reservation) => reservation.productFk === detailProduct.id)}
             isFavorite={favoriteIds.includes(detailProduct.id)}
             earliestPickup={earliestPickup}
+            isAdmin={user.role === "ADMIN"}
             onClose={closeProductDetail}
             onToggleFavorite={() => toggleFavorite(detailProduct)}
             onReserved={async () => {
               setMessage("A foglalás sikeres. Az admin felületen látszani fog, mit foglaltál; az átvételi időpont később is egyeztethető.");
               await loadStoreData();
             }}
+            onAdminSaved={loadStoreData}
           />
         ) : detailProductId ? (
           <section className="panel empty-state">
@@ -920,7 +941,7 @@ function ReservationsPage({ reservations, pickups, tick, onBackToCatalog, onUpda
               <th>Átvétel helye</th>
               <th>Átvétel ideje</th>
               <th>Lemondható eddig</th>
-              <th>Foglalás módosítása</th>
+              <th>Személyes átvétel helye és ideje</th>
             </tr>
           </thead>
           <tbody>
@@ -941,7 +962,14 @@ function ReservationsPage({ reservations, pickups, tick, onBackToCatalog, onUpda
                   <td>{formatHuf(reservation.product.price * reservation.quantity)}</td>
                   <td>{pickupAddress(reservation.pickup)}</td>
                   <td>{pickupRangeText(reservation.pickup)}</td>
-                  <td><span className={canCancelReservation(reservation) ? "cancel-countdown" : "cancel-countdown expired"}>{tick >= 0 ? formatCancelRemaining(reservation) : ""}</span></td>
+                  <td>
+                    <div className="reservation-cancel-actions">
+                      <span className={canCancelReservation(reservation) ? "cancel-countdown" : "cancel-countdown expired"}>{tick >= 0 ? formatCancelRemaining(reservation) : ""}</span>
+                      <button className={`reservation-cancel-button ${canCancelReservation(reservation) ? "is-cancellable" : "is-locked"}`} disabled={!canCancelReservation(reservation)} onClick={() => void onCancel(reservation)}>
+                        {canCancelReservation(reservation) ? "Foglalás lemondása" : "Foglalás már nem lemondható"}
+                      </button>
+                    </div>
+                  </td>
                   <td>
                     <div className="reservation-edit-actions">
                       <select
@@ -955,9 +983,6 @@ function ReservationsPage({ reservations, pickups, tick, onBackToCatalog, onUpda
                           <option value={pickup.id} key={pickup.id}>{pickup.address} | {formatPickupRange(pickup)}</option>
                         ))}
                       </select>
-                      <button className="ghost table-action-btn" disabled={!canCancelReservation(reservation)} onClick={() => onCancel(reservation)}>
-                        {canCancelReservation(reservation) ? "Foglalás lemondása" : "Nem lemondható"}
-                      </button>
                     </div>
                   </td>
                 </tr>
@@ -970,6 +995,38 @@ function ReservationsPage({ reservations, pickups, tick, onBackToCatalog, onUpda
           </tbody>
         </table>
       </div>
+      <section className="reservation-mobile-list" aria-label="Foglalások mobilnézetben">
+        {reservations.length ? reservations.map((reservation) => {
+          const image = productDisplayImage(reservation.product);
+          const url = imageUrl(image);
+          return <article className="reservation-mobile-card" key={reservation.id}>
+            <header>
+              {image ? <button className="image-preview-button" onClick={() => setPreviewImage(url)} aria-label="Termékkép nagyítása"><img src={url} alt={`Foglalás ${reservation.product.displayNumber}`} /></button> : <div className="reservation-mobile-placeholder" />}
+              <div>
+                <h3>{customerProductTitle(reservation.product)}</h3>
+                <strong>{formatHuf(reservation.product.price * reservation.quantity)}</strong>
+              </div>
+            </header>
+            <dl>
+              <div><dt>Méret</dt><dd>{reservation.color ? `${reservation.color}, ` : ""}{reservation.size} | {reservation.quantity} db</dd></div>
+              <div><dt>Átvétel helye</dt><dd>{pickupAddress(reservation.pickup)}</dd></div>
+              <div><dt>Átvétel ideje</dt><dd>{pickupRangeText(reservation.pickup)}</dd></div>
+              <div><dt>Lemondható eddig</dt><dd className="reservation-cancel-actions"><span className={canCancelReservation(reservation) ? "cancel-countdown" : "cancel-countdown expired"}>{tick >= 0 ? formatCancelRemaining(reservation) : ""}</span><button className={`reservation-cancel-button ${canCancelReservation(reservation) ? "is-cancellable" : "is-locked"}`} disabled={!canCancelReservation(reservation)} onClick={() => void onCancel(reservation)}>{canCancelReservation(reservation) ? "Foglalás lemondása" : "Foglalás már nem lemondható"}</button></dd></div>
+            </dl>
+            <label className="reservation-pickup-select">
+              <span>Személyes átvétel helye és ideje</span>
+              <select
+                value={reservation.pickupFk ?? ""}
+                disabled={busyReservationId === reservation.id || pickups.length === 0}
+                onChange={(event) => void updatePickup(reservation, Number(event.target.value))}
+              >
+                <option value="" disabled>Válassz átvételi időpontot</option>
+                {pickups.map((pickup) => <option value={pickup.id} key={pickup.id}>{pickup.address} | {formatPickupRange(pickup)}</option>)}
+              </select>
+            </label>
+          </article>;
+        }) : <div className="empty-state">Még nincs foglalásod.</div>}
+      </section>
       {previewImage && (
         <button className="image-lightbox" onClick={() => setPreviewImage("")} aria-label="Nagyított termékkép bezárása">
           <img src={previewImage} alt="Nagyított termékkép" />
@@ -1002,15 +1059,17 @@ function StoreProductCard({ product, isFavorite, onToggleFavorite, onOpenDetail,
   );
 }
 
-function ProductDetailPage({ product, pickups, reservations, isFavorite, earliestPickup, onClose, onToggleFavorite, onReserved }: {
+function ProductDetailPage({ product, pickups, reservations, isFavorite, earliestPickup, isAdmin, onClose, onToggleFavorite, onReserved, onAdminSaved }: {
   product: Product;
   pickups: PickupOption[];
   reservations: Reservation[];
   isFavorite: boolean;
   earliestPickup?: PickupOption;
+  isAdmin: boolean;
   onClose: () => void;
   onToggleFavorite: () => void;
   onReserved: () => Promise<void>;
+  onAdminSaved: () => Promise<void>;
 }) {
   const galleryImages = [productDisplayImage(product), ...visibleProductShareImages(product)].filter((image, index, images): image is ProductImage => Boolean(image) && images.findIndex((candidate) => candidate?.id === image?.id) === index);
   const [galleryIndex, setGalleryIndex] = useState(0);
@@ -1023,6 +1082,7 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [tick, setTick] = useState(0);
+  const [editing, setEditing] = useState(false);
   const activeReservation = reservations[0];
   const deadlineExpired = product.reservableUntil ? Date.now() > new Date(product.reservableUntil).getTime() : false;
   const selectedSizeLimit = sizes.find((item) => item.size === size)?.quantity ?? null;
@@ -1074,7 +1134,7 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
 
   return (
     <section className="product-detail-page">
-      <button className="secondary icon-text detail-back-button" onClick={onClose}>
+      <button className="tdo-primary icon-text detail-back-button" onClick={onClose}>
         <ArrowLeft size={18} /> Vissza a kínálathoz
       </button>
       <section className="product-detail">
@@ -1093,10 +1153,18 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
             <span>{galleryIndex + 1} / {galleryImages.length}</span>
             <button onClick={() => setGalleryIndex((value) => (value + 1) % galleryImages.length)} aria-label="Következő kép"><ChevronRight size={22} /></button>
           </div>}
+          {isAdmin && <section className="storefront-admin-tools">
+            <button className="secondary icon-text" onClick={() => setEditing((value) => !value)}><Eye size={18} /> Termék módosítása</button>
+            {editing && <ProductEditForm product={product} onSaved={() => { setEditing(false); void onAdminSaved(); }} />}
+          </section>}
         </div>
         <div className="product-detail-info">
           <h2>{customerProductTitle(product)}</h2>
           <strong className="detail-price">{formatHuf(product.price)}</strong>
+          <div className="detail-deadline">
+            <span>Foglalható eddig:</span>
+            <strong className={isDeadlineUrgent(product.reservableUntil) ? "urgent" : ""}>{tick >= 0 ? formatDetailRemaining(product.reservableUntil) : ""}</strong>
+          </div>
             <div className="quantity-row">
               <button onClick={() => setQuantity((value) => Math.max(1, value - 1))}>-</button>
               <span>{quantity}</span>
@@ -1125,15 +1193,15 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
           <button className="tdo-primary icon-text modal-reserve-button" disabled={busy || !!activeReservation || deadlineExpired || selectedSizeLimit === 0} onClick={reserve}>
             <ShoppingBag size={18} /> {deadlineExpired ? "A foglalási határidő lejárt" : activeReservation ? "Már lefoglalva" : selectedSizeLimit === 0 ? "Ez a méret elfogyott" : "Lefoglalom személyes átvételre"}
           </button>
-          <div className="detail-facts">
-            <div><span>Elérhető méretek:</span><strong className="detail-fact-value"><ProductSizeList product={product} /></strong></div>
-            <div><span>Foglalható eddig:</span><strong className={isDeadlineUrgent(product.reservableUntil) ? "urgent" : ""}>{tick >= 0 ? formatRemaining(product.reservableUntil) : ""}</strong></div>
-            <div><span>Várható szállítás:</span><strong className="detail-fact-value">{formatDateOnly(earliestPickup?.startAt)}</strong></div>
-          </div>
           <button className={`wishlist-row ${isFavorite ? "active" : ""}`} onClick={onToggleFavorite}>
             <Heart size={24} fill={isFavorite ? "currentColor" : "none"} />
             {isFavorite ? "Hozzáadtad a kívánságlistához." : "Kívánságlistára teszem"}
           </button>
+          <div className="detail-facts">
+            <div><span>{colors.length ? "Elérhető színek és méretek:" : "Elérhető méretek:"}</span><strong className="detail-fact-value"><ProductSizeList product={product} /></strong></div>
+            {product.description?.trim() && <div className="detail-description-fact"><span>Leírás:</span><strong className="detail-fact-value">{product.description}</strong></div>}
+            <div><span>Várható szállítás:</span><strong className="detail-fact-value">{formatDateOnly(earliestPickup?.startAt)}</strong></div>
+          </div>
         </div>
       </section>
     </section>
@@ -2059,6 +2127,8 @@ function ImageVisibilityEditor({ product, onSaved }: { product: Product; onSaved
 
 function AiGenerationQueue() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [archivedProducts, setArchivedProducts] = useState<Product[]>([]);
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [bulkBusy, setBulkBusy] = useState(activeAiBatch.running);
   const [selectedImageIds, setSelectedImageIds] = useState<number[]>([]);
@@ -2066,10 +2136,12 @@ function AiGenerationQueue() {
   const [error, setError] = useState("");
 
   async function load() {
-    const res = await api<{ products: Product[] }>("/api/products?status=DRAFT");
-    const queue = res.products.filter((product) => productOriginalImages(product).some((image) => image.viewType !== "OTHER"));
+    const res = await api<{ products: Product[] }>("/api/products");
+    const queue = res.products.filter((product) => productOriginalImages(product).some((image) => imageNeedsAiGeneration(product, image)));
+    const archived = res.products.filter((product) => productOriginalImages(product).some((image) => image.aiArchived));
     setProducts(queue);
-    const imageIds = queue.flatMap((product) => productOriginalImages(product).filter((image) => !image.isHidden && image.viewType !== "OTHER").map((image) => image.id));
+    setArchivedProducts(archived);
+    const imageIds = queue.flatMap((product) => productOriginalImages(product).filter((image) => imageNeedsAiGeneration(product, image)).map((image) => image.id));
     setSelectedImageIds((current) => current.length ? current.filter((id) => imageIds.includes(id)) : imageIds);
   }
 
@@ -2104,7 +2176,7 @@ function AiGenerationQueue() {
   async function generateAll(gender: ModelGender) {
     if (!products.length || bulkBusy) return;
     const queue = products.flatMap((product) => productOriginalImages(product)
-      .filter((image) => !image.isHidden && image.viewType !== "OTHER" && selectedImageIds.includes(image.id))
+      .filter((image) => imageNeedsAiGeneration(product, image) && selectedImageIds.includes(image.id))
       .map((image) => ({ product, image })));
     if (!queue.length) return setError("Jelölj ki legalább egy terméket az AI-generáláshoz.");
     const label = gender === "female" ? "Nő" : "Férfi";
@@ -2155,13 +2227,27 @@ function AiGenerationQueue() {
   }
 
   async function generateSelectedImages(product: Product, gender: ModelGender) {
-    const images = productOriginalImages(product).filter((image) => !image.isHidden && image.viewType !== "OTHER" && selectedImageIds.includes(image.id));
+    const images = productOriginalImages(product).filter((image) => imageNeedsAiGeneration(product, image) && selectedImageIds.includes(image.id));
     if (!images.length) return setError("Jelölj ki legalább egy képet ezen a termékkártyán.");
     setBulkBusy(true);
     try {
       for (const image of images) await generate(product, gender, image.id);
     } finally {
       setBulkBusy(false);
+    }
+  }
+
+  async function setAiArchive(product: Product, imageIds: number[], aiArchived: boolean) {
+    setError("");
+    try {
+      await Promise.all(imageIds.map((imageId) => api(`/api/products/${product.id}/images/${imageId}/ai-archive`, {
+        method: "PUT",
+        body: JSON.stringify({ ai_archived: aiArchived })
+      })));
+      setMessage(aiArchived ? "A kiválasztott képek az AI-archívumba kerültek." : "A kiválasztott képek visszakerültek az AI-generálási listára.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Az AI-archívum módosítása sikertelen.");
     }
   }
 
@@ -2185,36 +2271,44 @@ function AiGenerationQueue() {
         </section>
       )}
       <section className="share-grid ai-share-grid">
-        {products.map((product) => <AiQueueCard product={product} selectedImageIds={selectedImageIds} busy={bulkBusy || busyId === product.id} onToggleImage={(imageId) => setSelectedImageIds((current) => current.includes(imageId) ? current.filter((id) => id !== imageId) : [...current, imageId])} onFemale={() => generateSelectedImages(product, "female")} onMale={() => generateSelectedImages(product, "male")} onDelete={() => remove(product)} key={product.id} />)}
+        {products.map((product) => <AiQueueCard product={product} mode="queue" selectedImageIds={selectedImageIds} busy={bulkBusy || busyId === product.id} onToggleImage={(imageId) => setSelectedImageIds((current) => current.includes(imageId) ? current.filter((id) => id !== imageId) : [...current, imageId])} onFemale={() => generateSelectedImages(product, "female")} onMale={() => generateSelectedImages(product, "male")} onDelete={() => remove(product)} onArchive={(imageIds, value) => void setAiArchive(product, imageIds, value)} key={product.id} />)}
       </section>
       {products.length === 0 && <EmptyState title="Nincs AI-generálásra váró kép" />}
+      <section className="panel ai-archive-panel">
+        <button className="secondary icon-text" onClick={() => setArchiveOpen((value) => !value)}><FolderCheck size={19} /> AI-archívum ({archivedProducts.reduce((count, product) => count + productOriginalImages(product).filter((image) => image.aiArchived).length, 0)} kép)</button>
+        {archiveOpen && <div className="share-grid ai-share-grid">
+          {archivedProducts.map((product) => <AiQueueCard product={product} mode="archive" selectedImageIds={[]} busy={false} onToggleImage={() => undefined} onFemale={() => undefined} onMale={() => undefined} onDelete={() => remove(product)} onArchive={(imageIds, value) => void setAiArchive(product, imageIds, value)} key={product.id} />)}
+          {archivedProducts.length === 0 && <p className="status-note">Az AI-archívum még üres.</p>}
+        </div>}
+      </section>
     </>
   );
 }
 
-function AiQueueCard({ product, selectedImageIds, busy, onToggleImage, onFemale, onMale, onDelete }: { product: Product; selectedImageIds: number[]; busy: boolean; onToggleImage: (imageId: number) => void; onFemale: () => void; onMale: () => void; onDelete: () => void }) {
+function AiQueueCard({ product, mode, selectedImageIds, busy, onToggleImage, onFemale, onMale, onDelete, onArchive }: { product: Product; mode: "queue" | "archive"; selectedImageIds: number[]; busy: boolean; onToggleImage: (imageId: number) => void; onFemale: () => void; onMale: () => void; onDelete: () => void; onArchive: (imageIds: number[], value: boolean) => void }) {
   const [open, setOpen] = useState(false);
-  const originals = productOriginalImages(product);
+  const originals = productOriginalImages(product).filter((image) => mode === "archive" ? image.aiArchived : imageNeedsAiGeneration(product, image));
   const isMulti = originals.length > 1;
   return (
     <article className={`share-card ai-queue-card ${isMulti ? "multi-photo-card" : ""} ${open ? "share-card-open" : ""}`}>
       <button className="share-card-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <div className={`share-image-stack ${isMulti ? "multiple" : ""}`}>{originals.map((image, index) => {
-          const notGeneratable = image.viewType === "OTHER";
-          return <div className={`ai-queue-image ${!selectedImageIds.includes(image.id) || image.isHidden || notGeneratable ? "image-excluded" : ""}`} key={image.id}>
-            <img src={imageUrl(image)} alt={`AI-generálásra vár ${product.displayNumber}, ${index + 1}. kép`} onClick={(event) => { event.stopPropagation(); if (!notGeneratable) onToggleImage(image.id); }} />
-            <span>{notGeneratable ? "Egyéb - nem generálható" : imageViewLabel(image.viewType)}</span>
+          return <div className={`ai-queue-image ${mode === "queue" && !selectedImageIds.includes(image.id) ? "image-excluded" : ""}`} key={image.id}>
+            <img src={imageUrl(image)} alt={`AI-generálásra vár ${product.displayNumber}, ${index + 1}. kép`} onClick={(event) => { event.stopPropagation(); if (mode === "queue") onToggleImage(image.id); }} />
+            <span>{mode === "archive" ? "AI-archívumban" : imageViewLabel(image.viewType)}</span>
           </div>;
         })}</div>
         <span className="share-card-caption"><strong>#{product.displayNumber}</strong><span>{product.productName || product.productId}</span></span>
       </button>
       {open && <div className="publish-panel">
         <h2>#{product.displayNumber}</h2>
-        <p className="status-note">Koppints egy képre a kihagyásához; a beszürkült képek nem kerülnek AI-generálásra. Az Egyéb képek csak a galériában maradnak meg.</p>
+        <p className="status-note">{mode === "archive" ? "Az archívumban lévő képek megmaradnak, de nem kerülnek AI-generálásra." : "Koppints egy képre a kihagyásához; a beszürkült képek nem kerülnek AI-generálásra."}</p>
         <dl><dt>Product ID</dt><dd>{product.productId}</dd><dt>Ár</dt><dd>{formatHuf(product.price)}</dd><dt>Méretek</dt><dd>{formatProductSizes(product)}</dd></dl>
         <div className="big-action-grid">
-          <button className="primary icon-text" disabled={busy} onClick={onFemale}><Sparkles size={20} /> AI-generálás (Nő)</button>
-          <button className="secondary icon-text" disabled={busy} onClick={onMale}><Sparkles size={20} /> AI-generálás (Férfi)</button>
+          {mode === "queue" && <><button className="primary icon-text" disabled={busy} onClick={onFemale}><Sparkles size={20} /> AI-generálás (Nő)</button>
+          <button className="secondary icon-text" disabled={busy} onClick={onMale}><Sparkles size={20} /> AI-generálás (Férfi)</button></>}
+          <button className="secondary icon-text" disabled={busy} onClick={() => onArchive(originals.map((image) => image.id), mode !== "archive")}><FolderCheck size={20} /> {mode === "archive" ? "Vissza az AI-listára" : "Teljes kártya archiválása"}</button>
+          {open && originals.map((image) => <button className="ghost" disabled={busy} onClick={() => onArchive([image.id], mode !== "archive")} key={`archive-${image.id}`}>{mode === "archive" ? "Kép visszaállítása" : "Kép archiválása"}: {imageViewLabel(image.viewType)}</button>)}
           <button className="danger icon-text" disabled={busy} onClick={onDelete}><Trash2 size={20} /> Törlés</button>
         </div>
       </div>}
@@ -2471,6 +2565,58 @@ function ShareCard({ product, variant, busy, onDownload, onWebsite, onSendToAi, 
   );
 }
 
+function ProductImageManager({ product, onSaved }: { product: Product; onSaved: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function upload(file?: File) {
+    if (!file) return;
+    setBusy(true);
+    setError("");
+    try {
+      const body = new FormData();
+      body.append("image", file);
+      body.append("view_type", "AUTO");
+      await api(`/api/products/${product.id}/image`, { method: "POST", body });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "A kép feltöltése sikertelen.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(image: ProductImage) {
+    if (!window.confirm("Biztosan törlöd ezt a képet? A hozzá tartozó AI-verzió is törlődik.")) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/api/products/${product.id}/images/${image.id}`, { method: "DELETE" });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "A kép törlése sikertelen.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <section className="product-image-manager">
+    <strong>Képek kezelése</strong>
+    <div className="product-image-manager-list">
+      {productOriginalImages(product).map((image, index) => <div key={image.id}>
+        <img src={imageUrl(image)} alt={`${customerProductTitle(product)} ${index + 1}. kép`} />
+        <button className="danger icon-text" disabled={busy} type="button" onClick={() => void remove(image)}><Trash2 size={16} /> Kép törlése</button>
+      </div>)}
+    </div>
+    <label className="secondary icon-text upload-image-button">
+      <Upload size={18} /> További kép feltöltése
+      <input type="file" accept="image/*" disabled={busy} onChange={(event) => void upload(event.target.files?.[0])} />
+    </label>
+    <small>Legfeljebb 5 eredeti kép tartozhat egy termékhez. Az új kép az AI-generálási listára is bekerül.</small>
+    {error && <p className="error">{error}</p>}
+  </section>;
+}
+
 function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () => void }) {
   const initialColorVariants = productColors(product).map((color) => {
     const sizes = sortedProductSizes(product, color);
@@ -2560,6 +2706,7 @@ function ProductEditForm({ product, onSaved }: { product: Product; onSaved: () =
         Leírás
         <textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
       </label>
+      <ProductImageManager product={product} onSaved={onSaved} />
       <ImageVisibilityEditor product={product} onSaved={onSaved} />
       <button className="primary wide" disabled={busy} type="submit">Módosítás mentése</button>
     </form>
@@ -3010,6 +3157,8 @@ function RegisteredUsers() {
 
 function Orders() {
   const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [archivedReservations, setArchivedReservations] = useState<Reservation[]>([]);
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const [purchasedProcurementKeys, setPurchasedProcurementKeys] = useState<string[]>([]);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [exportFrom, setExportFrom] = useState("");
@@ -3018,8 +3167,12 @@ function Orders() {
   const [message, setMessage] = useState("");
 
   async function load() {
-    const res = await api<{ reservations: Reservation[] }>("/api/reservations");
+    const [res, archived] = await Promise.all([
+      api<{ reservations: Reservation[] }>("/api/reservations"),
+      api<{ reservations: Reservation[] }>("/api/reservations/archive")
+    ]);
     setReservations(res.reservations);
+    setArchivedReservations(archived.reservations);
   }
 
   useEffect(() => {
@@ -3050,6 +3203,24 @@ function Orders() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "A státusz módosítása sikertelen.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function fulfillReservations(source: Reservation[]) {
+    if (!source.length) return;
+    const label = source.length === 1 ? "ezt a foglalást" : `${source.length} foglalást`;
+    if (!window.confirm(`Áthelyezed ${label} a teljesített vásárlások archívumába?`)) return;
+    setBusyId(source[0].id);
+    setError("");
+    setMessage("");
+    try {
+      await Promise.all(source.map((reservation) => api(`/api/reservations/${reservation.id}/fulfill`, { method: "PATCH" })));
+      setMessage("A teljesített vásárlás az archívumba került.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "A vásárlás archiválása sikertelen.");
     } finally {
       setBusyId(null);
     }
@@ -3175,6 +3346,9 @@ function Orders() {
   const sortedReservations = sortReservationsForOrders(visibleReservations);
   const procurementGroups = procurementGroupsFor(sortedReservations);
   const reservationsByUser = reservationsByUserFor(sortedReservations);
+  const archivedSortedReservations = sortReservationsForOrders(archivedReservations);
+  const archivedProcurementGroups = procurementGroupsFor(archivedSortedReservations);
+  const archivedReservationsByUser = reservationsByUserFor(archivedSortedReservations);
   const filteredCount = visibleReservations.length;
   const isDateRangeInvalid = !!exportFrom && !!exportTo && dateStart(exportFrom) > dateEnd(exportTo);
 
@@ -3204,6 +3378,24 @@ function Orders() {
           <button className="secondary" onClick={() => { setExportFrom(""); setExportTo(""); }}>Szűrő törlése</button>
         </div>
       </section>
+      <section className="panel completed-orders-toggle">
+        <button className="secondary icon-text" onClick={() => setArchiveOpen((value) => !value)}><FolderCheck size={19} /> Teljesített vásárlások (archív) ({archivedReservations.length})</button>
+        <p>A teljesített rendeléseket itt külön, változatlan előzményekkel lehet visszanézni.</p>
+        {archiveOpen && <div className="completed-orders-archive">
+          <h2>Összesen vásárolt termékek</h2>
+          <div className="table-wrap"><table><thead><tr><th>Product ID</th><th>Sorszám</th><th>Kép</th><th>Termék</th><th>Méret</th><th>Darab</th><th>Foglalók</th><th>Teljesítve</th></tr></thead><tbody>
+            {archivedProcurementGroups.length ? archivedProcurementGroups.map((group) => { const image = productDisplayImage(group.product); return <tr key={`archive-product-${procurementKey(group.product, group.size, group.color)}`}><td>{group.product.productId}</td><td>#{group.product.displayNumber}</td><td>{image ? <img className="table-thumb" src={imageUrl(image)} alt="Teljesített termék" /> : "-"}</td><td>{productTitle(group.product)}</td><td>{group.color ? `${group.color}, ${group.size}` : group.size}</td><td><strong>{group.quantity} db</strong></td><td><div className="order-lines">{group.reservations.map((reservation) => <span key={reservation.id}>{reservation.quantity} db - {reservation.user?.username ?? "-"} | {formatDateTime(reservation.reservedAt)}</span>)}</div></td><td>{group.reservations.map((reservation) => formatDateTime(reservation.fulfilledAt)).join(" | ")}</td></tr>; }) : <tr><td colSpan={8} className="empty-table-cell">Még nincs teljesített vásárlás.</td></tr>}
+          </tbody></table></div>
+          <h2>Teljesített rendelések termék szerint</h2>
+          <div className="table-wrap"><table><thead><tr><th>Product ID</th><th>Sorszám</th><th>Kép</th><th>Méret</th><th>Lefoglalt darabszám</th><th>Foglaló felhasználó, foglalás ideje</th><th>Státusz</th></tr></thead><tbody>
+            {archivedProcurementGroups.length ? archivedProcurementGroups.map((group) => { const image = productDisplayImage(group.product); return <tr key={`archive-orders-${procurementKey(group.product, group.size, group.color)}`}><td>{group.product.productId}</td><td>#{group.product.displayNumber}</td><td>{image ? <img className="table-thumb" src={imageUrl(image)} alt="Teljesített rendelés" /> : "-"}</td><td>{group.color ? `${group.color}, ${group.size}` : group.size}</td><td><strong>{group.quantity} db</strong></td><td><div className="order-lines">{group.reservations.map((reservation) => <span key={reservation.id}>{reservation.user?.username ?? "-"} | {formatDateTime(reservation.reservedAt)}</span>)}</div></td><td><div className="order-lines">{group.reservations.map((reservation) => <span key={reservation.id}>{reservationStatusLabels[reservation.status]}</span>)}</div></td></tr>; }) : <tr><td colSpan={7} className="empty-table-cell">Még nincs teljesített vásárlás.</td></tr>}
+          </tbody></table></div>
+          <h2>Teljesített vásárlások felhasználók szerint</h2>
+          <div className="table-wrap"><table><thead><tr><th>Felhasználó</th><th>Rendelések</th><th>Összes darab</th><th>Fizetendő</th><th>Átvette</th></tr></thead><tbody>
+            {archivedReservationsByUser.length ? archivedReservationsByUser.map((group) => <tr key={`archive-user-${group.username}`}><td>{group.username}</td><td><div className="order-lines">{group.reservations.map((reservation) => <span key={reservation.id}>{productNumberPair(reservation.product)} | {productTitle(reservation.product)} | {reservation.color ? `${reservation.color}, ` : ""}{reservation.size} | {reservation.quantity} db</span>)}</div></td><td><strong>{group.quantity} db</strong></td><td>{formatHuf(group.amount)}</td><td>{group.reservations.map((reservation) => formatDateTime(reservation.fulfilledAt)).join(" | ")}</td></tr>) : <tr><td colSpan={5} className="empty-table-cell">Még nincs teljesített vásárlás.</td></tr>}
+          </tbody></table></div>
+        </div>}
+      </section>
       <section className="panel">
         <div className="section-heading">
           <h2>Összesen vásárlandó</h2>
@@ -3221,6 +3413,7 @@ function Orders() {
                 <th>Összesen vásárlandó</th>
                 <th>Foglalók</th>
                 <th>Megvéve</th>
+                <th>Teljesítve</th>
               </tr>
             </thead>
             <tbody>
@@ -3248,10 +3441,11 @@ function Orders() {
                         <input type="checkbox" checked={purchasedProcurementKeys.includes(key)} onChange={() => togglePurchasedProcurementItem(key)} />
                       </label>
                     </td>
+                    <td><label className="table-checkbox" aria-label={`${productNumberPair(group.product)} teljesítése`}><input type="checkbox" disabled={busyId != null} onChange={() => void fulfillReservations(group.reservations)} /></label></td>
                   </tr>
                 );
               }) : (
-                <tr><td colSpan={8} className="empty-table-cell">Még nincs vásárlandó termék.</td></tr>
+                <tr><td colSpan={9} className="empty-table-cell">Még nincs vásárlandó termék.</td></tr>
               )}
             </tbody>
           </table>
@@ -3273,6 +3467,7 @@ function Orders() {
                 <th>Lefoglalt darabszám</th>
                 <th>Foglaló felhasználó, foglalás ideje</th>
                 <th>Státusz</th>
+                <th>Teljesítve</th>
               </tr>
             </thead>
             <tbody>
@@ -3292,6 +3487,7 @@ function Orders() {
                         ))}
                       </div>
                     </td>
+                    <td><label className="table-checkbox" aria-label={`${productNumberPair(group.product)} teljesítése`}><input type="checkbox" disabled={busyId != null} onChange={() => void fulfillReservations(group.reservations)} /></label></td>
                     <td>
                       <div className="order-status-lines">
                         {group.reservations.map((reservation) => (
@@ -3312,7 +3508,7 @@ function Orders() {
                   </tr>
                 );
               }) : (
-                <tr><td colSpan={7} className="empty-table-cell">Még nincs aktív rendelés.</td></tr>
+                <tr><td colSpan={8} className="empty-table-cell">Még nincs aktív rendelés.</td></tr>
               )}
             </tbody>
           </table>
@@ -3332,6 +3528,7 @@ function Orders() {
                 <th>Összes darab</th>
                 <th>Fizetendő</th>
                 <th>Státusz</th>
+                <th>Teljesítve</th>
               </tr>
             </thead>
             <tbody>
@@ -3345,6 +3542,7 @@ function Orders() {
                       ))}
                     </div>
                   </td>
+                  <td><label className="table-checkbox" aria-label={`${group.username} rendeléseinek teljesítése`}><input type="checkbox" disabled={busyId != null} onChange={() => void fulfillReservations(group.reservations)} /></label></td>
                   <td><strong>{group.quantity} db</strong></td>
                   <td>{formatHuf(group.amount)}</td>
                   <td>
@@ -3369,7 +3567,7 @@ function Orders() {
                   </td>
                 </tr>
               )) : (
-                <tr><td colSpan={5} className="empty-table-cell">Még nincs aktív rendelés.</td></tr>
+                <tr><td colSpan={6} className="empty-table-cell">Még nincs aktív rendelés.</td></tr>
               )}
             </tbody>
           </table>

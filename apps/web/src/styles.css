@@ -1299,6 +1299,7 @@ figcaption { padding: 8px 2px 0; color: #667085; font-weight: 700; }
   display: grid;
   gap: 16px;
 }
+.reservation-mobile-list { display: none; }
 .pickup-panel {
   display: grid;
   gap: 12px;
@@ -1519,6 +1520,7 @@ tr:last-child td {
   padding: 0;
   background: transparent;
   text-align: left;
+  min-width: 0;
 }
 .store-card-summary span {
   display: -webkit-box;
@@ -1529,6 +1531,10 @@ tr:last-child td {
   font-weight: 700;
   line-height: 1.18;
   overflow: hidden;
+  width: 100%;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -1653,9 +1659,6 @@ tr:last-child td {
 }
 .detail-back-button {
   width: fit-content;
-  border-color: #eaded5;
-  color: var(--tdo-brand-dark);
-  background: #fffaf4;
   font-weight: 800;
 }
 .product-detail-image img {
@@ -1777,6 +1780,66 @@ tr:last-child td {
   color: #d92d20;
   font-weight: 800;
 }
+.detail-deadline {
+  display: grid;
+  gap: 5px;
+  margin: 12px 0 20px;
+}
+.detail-deadline span {
+  color: #475467;
+  font-size: 18px;
+  font-weight: 800;
+}
+.detail-deadline strong {
+  color: #202124;
+  font-size: 26px;
+  font-weight: 800;
+}
+.detail-deadline strong.urgent { color: #d92d20; }
+.detail-description-fact strong {
+  color: #475467;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.product-size-lines {
+  font-weight: 400;
+}
+.product-size-lines > span {
+  color: #667085;
+  font-weight: 400;
+}
+.product-size-lines > span b { color: #202124; font-weight: 800; }
+.storefront-admin-tools {
+  width: min(100%, 780px);
+  margin-top: 24px;
+}
+.storefront-admin-tools .edit-panel { margin-top: 14px; }
+.product-image-manager {
+  display: grid;
+  gap: 12px;
+  grid-column: 1 / -1;
+  padding: 14px;
+  border: 1px solid #d8dee6;
+  background: #f8fafc;
+}
+.product-image-manager-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.product-image-manager-list > div { display: grid; gap: 7px; width: 110px; }
+.product-image-manager-list img { width: 110px; height: 130px; object-fit: contain; background: #fff; }
+.product-image-manager-list button { font-size: 12px; padding: 8px; }
+.upload-image-button { width: fit-content; cursor: pointer; }
+.upload-image-button input { display: none; }
+.product-image-manager small { color: #667085; }
+.ai-archive-panel { margin-top: 20px; }
+.ai-archive-panel > .secondary { margin-bottom: 12px; }
+.completed-orders-toggle { display: grid; gap: 10px; margin-bottom: 20px; }
+.completed-orders-toggle > p { margin: 0; color: #667085; }
+.completed-orders-archive { display: grid; gap: 16px; padding-top: 12px; }
+.completed-orders-archive h2 { margin: 0; font-size: 20px; }
+
 .wishlist-row {
   display: inline-flex;
   align-items: center;
@@ -1821,6 +1884,29 @@ tr:last-child td {
   display: grid;
   gap: 8px;
   min-width: 260px;
+}
+.reservation-cancel-actions {
+  display: grid;
+  gap: 8px;
+  align-items: start;
+}
+.reservation-cancel-button {
+  width: 100%;
+  min-height: 42px;
+  border: 0;
+  font-weight: 800;
+}
+.reservation-cancel-button.is-cancellable {
+  background: #b4233f;
+  color: #fff;
+}
+.reservation-cancel-button.is-cancellable:hover { background: #8e1c32; }
+.reservation-cancel-button.is-locked,
+.reservation-cancel-button:disabled {
+  background: #d9dde2;
+  color: #1f2933;
+  cursor: not-allowed;
+  opacity: 1;
 }
 .cancel-countdown {
   display: inline-flex;
@@ -2008,18 +2094,80 @@ tr:last-child td {
   }
   .store-card-summary strong { font-size: 23px; }
   .deadline-countdown { font-size: 12px; }
+  .reservations-panel { gap: 12px; padding: 14px; }
+  .reservations-panel > .table-wrap { display: none !important; }
+  .reservations-panel .pickup-panel { padding: 10px 12px; }
+  .reservation-mobile-list { display: grid !important; gap: 12px; }
+  .reservation-mobile-card {
+    display: grid;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--tdo-line);
+    border-radius: 8px;
+    background: #fff;
+  }
+  .reservation-mobile-card header {
+    display: grid;
+    grid-template-columns: 76px minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+  }
+  .reservation-mobile-card header img,
+  .reservation-mobile-placeholder {
+    display: block;
+    width: 76px;
+    height: 94px;
+    border-radius: 5px;
+    object-fit: contain;
+    background: #f4f1ed;
+  }
+  .reservation-mobile-card h3 {
+    margin: 0 0 5px;
+    font-family: var(--tdo-display-font);
+    font-size: 19px;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+  .reservation-mobile-card header strong { font-size: 18px; }
+  .reservation-mobile-card dl {
+    display: grid;
+    gap: 7px;
+    margin: 0;
+    padding-top: 10px;
+    border-top: 1px solid #e8eaed;
+  }
+  .reservation-mobile-card dl > div {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .reservation-mobile-card dt { color: #667085; font-size: 14px; font-weight: 800; }
+  .reservation-mobile-card dd { min-width: 0; margin: 0; color: #202124; font-size: 14px; overflow-wrap: anywhere; }
+  .reservation-pickup-select { display: grid; gap: 6px; color: #475467; font-size: 14px; font-weight: 800; }
+  .reservation-pickup-select select { width: 100%; min-height: 48px; font-size: 15px; }
+  .reservation-cancel-button { width: 100%; min-height: 46px; font-size: 15px; }
   .product-detail {
     grid-template-columns: 1fr;
-    gap: 24px;
-    padding: 0 0 26px;
+    gap: 16px;
+    padding: 0 0 20px;
   }
-  .product-detail-info { padding-right: 0; }
-  .product-detail-info h2 { font-size: 28px; }
-  .detail-price { font-size: 26px; }
-  .detail-facts div { grid-template-columns: 1fr; gap: 8px; }
+  .product-detail-page { gap: 14px; }
+  .product-detail-info { gap: 14px; padding-right: 0; }
+  .product-detail-info h2 { font-size: 25px; line-height: 1.2; }
+  .detail-price { font-size: 23px; }
+  .detail-deadline { gap: 2px; margin: 2px 0 6px; }
+  .detail-deadline span { font-size: 14px; }
+  .detail-deadline strong { font-size: 18px; }
+  .quantity-row { gap: 12px; padding: 8px 12px; }
+  .quantity-row button { min-width: 36px; font-size: 26px; }
+  .quantity-row span { min-width: 56px; min-height: 56px; font-size: 20px; }
+  .quantity-row em { font-size: 18px; }
+  .product-detail .reserve-size-panel select { min-height: 56px; font-size: 18px; }
+  .detail-facts div { grid-template-columns: 1fr; gap: 5px; padding: 10px 0; }
   .detail-facts span,
   .detail-facts strong,
-  .wishlist-row { font-size: 22px; }
+  .wishlist-row { font-size: 17px; }
+  .wishlist-row { gap: 8px; }
   .compact-toolbar { align-items: flex-start; flex-direction: column; }
   .compact-toolbar .secondary { width: 100%; }
   .share-image-slot { min-height: 0; }
@@ -2065,3 +2213,30 @@ tr:last-child td {
 .app.pwa-mode { grid-template-columns: 1fr; }
 .app.pwa-mode .sidebar { display: none; }
 .app.pwa-mode .content { padding-top: 18px; }
+
+/* Desktop product detail: denser typography while preserving the roomy mobile layout. */
+@media (min-width: 769px) {
+  .product-detail-page { gap: 16px; }
+  .product-detail {
+    column-gap: 64px;
+    row-gap: 32px;
+    padding-bottom: 30px;
+  }
+  .product-detail-info {
+    gap: 16px;
+    padding-right: 24px;
+  }
+  .product-detail-info h2 { font-size: 28px; }
+  .detail-price { font-size: 25px; }
+  .detail-deadline { gap: 3px; margin: 4px 0 10px; }
+  .detail-deadline span { font-size: 15px; }
+  .detail-deadline strong { font-size: 20px; }
+  .quantity-row button { font-size: 28px; }
+  .quantity-row span { font-size: 22px; }
+  .quantity-row em { font-size: 20px; }
+  .detail-facts div { gap: 16px; padding: 12px 0; }
+  .detail-facts span,
+  .detail-facts strong { font-size: 18px; }
+  .wishlist-row { gap: 10px; font-size: 18px; }
+  .product-detail .reserve-size-panel select { font-size: 19px; }
+}

@@ -154,6 +154,7 @@ export type ProductImageDto = {
   mimeType: string;
   width: number | null;
   height: number | null;
+  aiArchived: boolean;
   createdAt: string;
 };
 
@@ -241,6 +242,7 @@ export type ReservationDto = {
   canCancel: boolean;
   reservedAt: string;
   cancelledAt: string | null;
+  fulfilledAt: string | null;
   product: ProductDto;
   pickup: PickupOptionDto;
   user: UserDto | null;

@@ -12,7 +12,7 @@ const CANCELLATION_WINDOW_MS = 10 * 60 * 1000;
 export class ReservationService {
   async my(userId: number) {
     return prisma.reservation.findMany({
-      where: { userId, cancelledAt: null },
+      where: { userId, cancelledAt: null, fulfilledAt: null },
       include: includeReservation,
       orderBy: { reservedAt: "desc" }
     });
@@ -20,10 +20,24 @@ export class ReservationService {
 
   async all() {
     return prisma.reservation.findMany({
-      where: { cancelledAt: null },
+      where: { cancelledAt: null, fulfilledAt: null },
       include: includeReservation,
       orderBy: { reservedAt: "desc" }
     });
+  }
+
+  async archived() {
+    return prisma.reservation.findMany({
+      where: { cancelledAt: null, fulfilledAt: { not: null } },
+      include: includeReservation,
+      orderBy: { fulfilledAt: "desc" }
+    });
+  }
+
+  async fulfill(id: number) {
+    const reservation = await prisma.reservation.findFirst({ where: { id, cancelledAt: null, fulfilledAt: null } });
+    if (!reservation) throw new AppError(404, "Az aktív rendelés nem található.");
+    return prisma.reservation.update({ where: { id }, data: { fulfilledAt: new Date() }, include: includeReservation });
   }
 
   async reserve(payload: ReservationPayload, userId: number) {

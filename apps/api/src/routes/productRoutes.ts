@@ -93,6 +93,7 @@ productRoutes.get(
 
 productRoutes.put(
   "/:id",
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const payload = productUpdatePayloadSchema.parse(req.body);
     res.json({ product: await products.update(Number(req.params.id), payload) });
@@ -109,6 +110,7 @@ productRoutes.delete(
 
 productRoutes.post(
   "/:id/image",
+  requireAdmin,
   uploadLimiter,
   upload.single("image"),
   asyncHandler(async (req, res) => {
@@ -123,6 +125,7 @@ productRoutes.post(
 
 productRoutes.post(
   "/:id/generate",
+  requireAdmin,
   generationLimiter,
   asyncHandler(async (req, res) => {
     const payload = generationPayloadSchema.parse(req.body ?? {});
@@ -136,6 +139,23 @@ productRoutes.put(
   asyncHandler(async (req, res) => {
     if (typeof req.body?.is_hidden !== "boolean") throw new AppError(400, "A kép láthatósága kötelező.");
     res.json({ image: await products.setImageVisibility(Number(req.params.id), Number(req.params.imageId), req.body.is_hidden) });
+  })
+);
+
+productRoutes.put(
+  "/:id/images/:imageId/ai-archive",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    if (typeof req.body?.ai_archived !== "boolean") throw new AppError(400, "Az AI-archív állapot megadása kötelező.");
+    res.json({ image: await products.setImageAiArchive(Number(req.params.id), Number(req.params.imageId), req.body.ai_archived) });
+  })
+);
+
+productRoutes.delete(
+  "/:id/images/:imageId",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    res.json({ product: await products.deleteImage(Number(req.params.id), Number(req.params.imageId)) });
   })
 );
 

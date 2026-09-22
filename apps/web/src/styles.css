@@ -1479,7 +1479,7 @@ tr:last-child td {
   display: block;
   width: 100%;
   aspect-ratio: 3 / 4.55;
-  object-fit: cover;
+  object-fit: contain;
   background: #f4f1ed;
 }
 .favorite-button {

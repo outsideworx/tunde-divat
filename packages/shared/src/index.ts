@@ -93,6 +93,14 @@ export const reservationPickupPayloadSchema = z.object({
   pickup_id: z.coerce.number().int().positive()
 });
 
+export const conversationCreatePayloadSchema = z.object({
+  product_id: z.coerce.number().int().positive()
+});
+
+export const conversationMessagePayloadSchema = z.object({
+  body: z.string().trim().min(1, "Írj üzenetet küldés előtt.").max(2_000)
+});
+
 export const loginSchema = z.object({
   username: z.string().trim().min(3).max(40).regex(/^[a-zA-Z0-9._-]+$/),
   password: z.string().min(6).max(200)
@@ -134,6 +142,8 @@ export type GenerationPayload = z.infer<typeof generationPayloadSchema>;
 export type ReservationPayload = z.infer<typeof reservationPayloadSchema>;
 export type ReservationStatusPayload = z.infer<typeof reservationStatusPayloadSchema>;
 export type ReservationPickupPayload = z.infer<typeof reservationPickupPayloadSchema>;
+export type ConversationCreatePayload = z.infer<typeof conversationCreatePayloadSchema>;
+export type ConversationMessagePayload = z.infer<typeof conversationMessagePayloadSchema>;
 export type RegisterPayload = z.infer<typeof registerSchema>;
 export type AdminUserUpdatePayload = z.infer<typeof adminUserUpdateSchema>;
 export type ProductStatus = (typeof productStatuses)[number];

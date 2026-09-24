@@ -1,6 +1,6 @@
 import { Fragment, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowLeft, Ban, Camera, ChevronLeft, ChevronRight, Download, Eye, FolderCheck, Heart, KeyRound, LogOut, Menu, PanelLeftClose, Plus, RefreshCcw, Search, Share2, ShoppingBag, Sparkles, Trash2, Upload, Users } from "lucide-react";
+import { ArrowLeft, Ban, Camera, Check, CheckCheck, ChevronLeft, ChevronRight, Download, Eye, FolderCheck, Heart, KeyRound, LogOut, Menu, MessageCircle, PanelLeftClose, Plus, RefreshCcw, Search, Send, Share2, ShoppingBag, Sparkles, Trash2, Upload, Users } from "lucide-react";
 import { allowedSizes, formatHuf, type ReservationStatus } from "@fashion-mvp/shared";
 import "./styles.css";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -61,6 +61,25 @@ type Reservation = {
   pickup?: PickupOption | null;
   user?: { id: number; username: string; email?: string | null };
 };
+type ConversationMessage = {
+  id: number;
+  senderId: number;
+  body: string;
+  readAt?: string | null;
+  createdAt: string;
+  sender: { id: number; username: string; role: string };
+};
+type Conversation = {
+  id: number;
+  productFk: number;
+  userId: number;
+  createdAt: string;
+  updatedAt: string;
+  unreadCount: number;
+  product: Product;
+  user: { id: number; username: string; role: string };
+  messages: ConversationMessage[];
+};
 
 type User = { id: number; username: string; email?: string | null; role: string };
 type RegisteredUser = User & { lastName?: string | null; firstName?: string | null; phone?: string | null; isActive: boolean; privacyAcceptedAt?: string | null; createdAt: string };
@@ -74,10 +93,10 @@ type RegisteredUserForm = {
   is_active: boolean;
 };
 type Step = "photo" | "data" | "saved";
-type View = "dashboard" | "storefront" | "quick" | "new" | "ai" | "share" | "current" | "orders" | "pickup" | "deleted";
+type View = "dashboard" | "storefront" | "quick" | "new" | "ai" | "share" | "current" | "orders" | "pickup" | "deleted" | "messenger";
 type AdminView = View | "users";
 type AuthMode = "login" | "register";
-type StoreView = "catalog" | "reservations" | "favorites";
+type StoreView = "catalog" | "reservations" | "messages" | "favorites";
 type ShareVariant = "raw" | "generated" | "multi";
 type ModelGender = "female" | "male";
 type ReservationSelection = { id: number; color: string; size: string; quantity: number };
@@ -555,7 +574,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
 
   return (
     <main className="auth-shell">
-      <span className="build-version">ver.: 1.05</span>
+      <span className="build-version">ver.: 1.06</span>
       <section className="brand-panel">
         <span className="sr-only">Tünde Divat Online</span>
       </section>
@@ -625,6 +644,9 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
   const [products, setProducts] = useState<Product[]>([]);
   const [pickups, setPickups] = useState<PickupOption[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [selectedConversationId, setSelectedConversationId] = useState<number | null>(null);
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [storeView, setStoreView] = useState<StoreView>("catalog");
   const [favoriteIds, setFavoriteIds] = useState<number[]>([]);
   const [detailProductId, setDetailProductId] = useState<number | null>(() => productIdFromPath());
@@ -635,19 +657,52 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
   const [tick, setTick] = useState(0);
 
   async function loadStoreData() {
-    const [productRes, pickupRes, reservationRes] = await Promise.all([
+    const [productRes, pickupRes, reservationRes, conversationRes] = await Promise.all([
       api<{ products: Product[] }>("/api/products"),
       api<{ options: PickupOption[] }>("/api/pickups"),
-      api<{ reservations: Reservation[] }>("/api/reservations/my")
+      api<{ reservations: Reservation[] }>("/api/reservations/my"),
+      api<{ conversations: Conversation[] }>("/api/conversations/mine")
     ]);
     setProducts(productRes.products);
     setPickups(pickupRes.options);
     setReservations(reservationRes.reservations);
+    setConversations(conversationRes.conversations);
+  }
+
+  async function loadConversations() {
+    const response = await api<{ conversations: Conversation[] }>("/api/conversations/mine");
+    setConversations(response.conversations);
+  }
+
+  async function loadUnreadMessageCount() {
+    const response = await api<{ count: number }>("/api/conversations/unread-count");
+    setUnreadMessageCount(response.count);
+  }
+
+  async function selectConversation(conversationId: number | null) {
+    if (conversationId === null) {
+      setSelectedConversationId(null);
+      return;
+    }
+    const response = await api<{ conversation: Conversation }>(`/api/conversations/${conversationId}`);
+    setConversations((current) => current.map((conversation) => conversation.id === conversationId ? response.conversation : conversation));
+    setSelectedConversationId(conversationId);
+    await loadUnreadMessageCount();
   }
 
   useEffect(() => {
     loadStoreData().catch((err) => setError(err instanceof Error ? err.message : "A kínálat betöltése sikertelen"));
+    void loadUnreadMessageCount().catch(() => undefined);
+    const poll = window.setInterval(() => void loadUnreadMessageCount().catch(() => undefined), 15_000);
+    return () => window.clearInterval(poll);
   }, []);
+
+  useEffect(() => {
+    if (storeView !== "messages") return;
+    void loadConversations().catch((err) => setError(err instanceof Error ? err.message : "Az üzenetek betöltése sikertelen."));
+    const poll = window.setInterval(() => void loadConversations().catch(() => undefined), 15_000);
+    return () => window.clearInterval(poll);
+  }, [storeView]);
 
   useEffect(() => {
     const raw = window.localStorage.getItem(`tdo:favorites:${user.id}`);
@@ -720,6 +775,25 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  async function openProductConversation(product: Product) {
+    setError("");
+    try {
+      const response = await api<{ conversation: Conversation }>("/api/conversations", {
+        method: "POST",
+        body: JSON.stringify({ product_id: product.id })
+      });
+      setSelectedConversationId(response.conversation.id);
+      setStoreView("messages");
+      window.history.pushState({}, "", "/");
+      setDetailProductId(null);
+      await loadConversations();
+      await loadUnreadMessageCount();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "A beszélgetés megnyitása sikertelen.");
+    }
+  }
+
   return (
     <div className="store-shell">
       <header className="store-topbar">
@@ -730,7 +804,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
           </div>
           <div className="store-user">
             <span>{user.username} | felhasználó</span>
-            <strong>{storeView === "reservations" ? "Foglalásaim" : storeView === "favorites" ? "Kívánságlistám" : "Aktuális kínálat"}</strong>
+            <strong>{storeView === "reservations" ? "Foglalásaim" : storeView === "messages" ? "Üzeneteim" : storeView === "favorites" ? "Kívánságlistám" : "Aktuális kínálat"}</strong>
             <div className="header-reservation-summary">
               <span>Lefoglalt termékek száma: <strong>{reservationTotals.count} db</strong></span>
               <span>Fizetendő: <strong>{formatHuf(reservationTotals.amount)}</strong></span>
@@ -741,6 +815,9 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
           <button className={storeView === "catalog" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("catalog")}>Aktuális kínálat</button>
           <button className={storeView === "reservations" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("reservations")}>
             Foglalásaim{reservationTotals.count > 0 ? ` (${reservationTotals.count})` : ""}
+          </button>
+          <button className={`${storeView === "messages" && !detailProductId ? "active" : ""} ${unreadMessageCount > 0 ? "has-unread" : ""}`} onClick={() => goToStoreView("messages")}>
+            Üzeneteim{unreadMessageCount > 0 ? ` (${unreadMessageCount})` : ""}
           </button>
           <button className={storeView === "favorites" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("favorites")}>
             Kívánságlistám{favoriteProducts.length > 0 ? ` (${favoriteProducts.length})` : ""}
@@ -765,6 +842,7 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
               await loadStoreData();
             }}
             onAdminSaved={loadStoreData}
+            onAskTunde={() => void openProductConversation(detailProduct)}
           />
         ) : detailProductId ? (
           <section className="panel empty-state">
@@ -792,6 +870,19 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
               setMessage("A foglalást lemondtuk.");
               await loadStoreData();
             }}
+          />
+        ) : storeView === "messages" ? (
+          <MessengerPage
+            conversations={conversations}
+            selectedConversationId={selectedConversationId}
+            viewer={user}
+            onSelect={(conversationId) => void selectConversation(conversationId)}
+            onSend={async (conversationId, body) => {
+              await api(`/api/conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ body }) });
+              await loadConversations();
+              await loadUnreadMessageCount();
+            }}
+            onBackToProduct={openProductDetail}
           />
         ) : storeView === "favorites" ? (
           <>
@@ -851,13 +942,17 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
           <ShoppingBag size={20} />
           <span>Aktuális kínálat</span>
         </button>
-        <button className={storeView === "favorites" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("favorites")}>
-          <Heart size={20} fill={storeView === "favorites" && !detailProductId ? "currentColor" : "none"} />
-          <span>Kívánságlistám{favoriteProducts.length > 0 ? ` (${favoriteProducts.length})` : ""}</span>
-        </button>
         <button className={storeView === "reservations" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("reservations")}>
           <FolderCheck size={20} />
           <span>Foglalásaim{reservationTotals.count > 0 ? ` (${reservationTotals.count})` : ""}</span>
+        </button>
+        <button className={`${storeView === "messages" && !detailProductId ? "active" : ""} ${unreadMessageCount > 0 ? "has-unread" : ""}`} onClick={() => goToStoreView("messages")}>
+          <MessageCircle size={20} />
+          <span>Üzeneteim{unreadMessageCount > 0 ? ` (${unreadMessageCount})` : ""}</span>
+        </button>
+        <button className={storeView === "favorites" && !detailProductId ? "active" : ""} onClick={() => goToStoreView("favorites")}>
+          <Heart size={20} fill={storeView === "favorites" && !detailProductId ? "currentColor" : "none"} />
+          <span>Kívánságlistám{favoriteProducts.length > 0 ? ` (${favoriteProducts.length})` : ""}</span>
         </button>
         <button onClick={logout}>
           <LogOut size={20} />
@@ -866,6 +961,147 @@ function CustomerStorefront({ user, onLogout, onBackToAdmin }: { user: User; onL
       </nav>
     </div>
   );
+}
+
+function MessengerPage({ conversations, selectedConversationId, viewer, onSelect, onSend, onBackToProduct, admin = false }: {
+  conversations: Conversation[];
+  selectedConversationId: number | null;
+  viewer: User;
+  onSelect: (conversationId: number | null) => void;
+  onSend: (conversationId: number, body: string) => Promise<void>;
+  onBackToProduct?: (product: Product) => void;
+  admin?: boolean;
+}) {
+  const activeConversation = conversations.find((conversation) => conversation.id === selectedConversationId);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => setDraft(""), [activeConversation?.id]);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!activeConversation || !draft.trim()) return;
+    setSending(true);
+    setError("");
+    try {
+      await onSend(activeConversation.id, draft.trim());
+      setDraft("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Az üzenet küldése sikertelen.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <section className={`messenger-panel ${activeConversation ? "has-active-conversation" : ""}`}>
+      <aside className="messenger-list">
+        <header>
+          <div>
+            <span>{admin ? "Adminisztráció" : "Kapcsolat Tündével"}</span>
+            <h2>{admin ? "Messenger" : "Üzeneteim"}</h2>
+          </div>
+          <MessageCircle size={23} />
+        </header>
+        {conversations.length ? <div className="conversation-list-items">
+          {conversations.map((conversation) => {
+            const image = productDisplayImage(conversation.product);
+            const lastMessage = conversation.messages.at(-1);
+            return <button key={conversation.id} className={`${activeConversation?.id === conversation.id ? "active" : ""} ${conversation.unreadCount > 0 ? "has-unread" : ""}`} onClick={() => onSelect(conversation.id)}>
+              {image ? <img src={imageUrl(image)} alt="" /> : <div className="conversation-image-placeholder" />}
+              <span>
+                <strong>{admin ? conversation.user.username : customerProductTitle(conversation.product)}</strong>
+                <small>{admin ? customerProductTitle(conversation.product) : lastMessage?.body || "Még nem írtál üzenetet."}</small>
+                {admin && lastMessage && <em>{lastMessage.body}</em>}
+              </span>
+              {conversation.unreadCount > 0 && <b>{conversation.unreadCount}</b>}
+            </button>;
+          })}
+        </div> : <div className="messenger-empty-list">
+          <MessageCircle size={28} />
+          <p>Még nincs megnyitott üzeneted. Ha kérdésed van egy termékről, nyisd meg, majd kattints a „Kérdezz Tündétől” gombra.</p>
+        </div>}
+      </aside>
+      <section className="messenger-thread">
+        {!activeConversation ? <div className="messenger-empty-thread"><MessageCircle size={38} /><h2>{admin ? "Még nincs üzenet" : "Válassz egy terméket"}</h2><p>{admin ? "A vásárlói kérdések itt jelennek majd meg." : "Egy termék részletezőjében a „Kérdezz Tündétől” gombbal indíthatsz beszélgetést."}</p></div> : <>
+          <header className="messenger-product-context">
+            <button className="messenger-mobile-back" type="button" onClick={() => onSelect(null)} aria-label="Vissza az üzenetekhez"><ArrowLeft size={19} /></button>
+            {productDisplayImage(activeConversation.product) && <img src={imageUrl(productDisplayImage(activeConversation.product))} alt={customerProductTitle(activeConversation.product)} />}
+            <div>
+              {admin && <span>{activeConversation.user.username}</span>}
+              <h2>{customerProductTitle(activeConversation.product)}</h2>
+              <small>{formatHuf(activeConversation.product.price)} | <ProductSizeList product={activeConversation.product} /></small>
+            </div>
+          </header>
+          <div className="messenger-messages" aria-live="polite">
+            {!activeConversation.messages.length && <div className="messenger-start-note">Írd meg a kérdésedet Tündének. A beszélgetés ehhez a termékhez fog kapcsolódni.</div>}
+            {activeConversation.messages.map((message) => {
+              const own = message.senderId === viewer.id;
+              return <div className={`chat-message ${own ? "own" : ""}`} key={message.id}>
+                <p>{message.body}</p>
+                <small>{own ? <>{message.readAt ? <CheckCheck size={14} /> : <Check size={14} />} {message.readAt ? "Elolvasva" : "Elküldve"}</> : `${message.sender.username} | ${formatDateTime(message.createdAt)}`}</small>
+              </div>;
+            })}
+          </div>
+          <form className="messenger-compose" onSubmit={submit}>
+            <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Írd ide az üzeneted..." maxLength={2_000} />
+            <div className="messenger-compose-actions">
+              {!admin && onBackToProduct && <button className="tdo-primary icon-text messenger-return-product" type="button" onClick={() => onBackToProduct(activeConversation.product)}><ArrowLeft size={18} /> Vissza a termékhez</button>}
+              <button className="tdo-primary icon-text" disabled={sending || !draft.trim()}><Send size={18} /> Küldés</button>
+            </div>
+          </form>
+          {error && <p className="error">{error}</p>}
+        </>}
+      </section>
+    </section>
+  );
+}
+
+function AdminMessenger({ user, onUnreadCount }: { user: User; onUnreadCount: (count: number) => void }) {
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [selectedConversationId, setSelectedConversationId] = useState<number | null>(null);
+  const [error, setError] = useState("");
+
+  async function loadConversations() {
+    const response = await api<{ conversations: Conversation[] }>("/api/conversations");
+    setConversations(response.conversations);
+  }
+
+  async function selectConversation(conversationId: number | null) {
+    if (conversationId === null) {
+      setSelectedConversationId(null);
+      return;
+    }
+    const response = await api<{ conversation: Conversation }>(`/api/conversations/${conversationId}`);
+    setConversations((current) => current.map((conversation) => conversation.id === conversationId ? response.conversation : conversation));
+    setSelectedConversationId(conversationId);
+    const unread = await api<{ count: number }>("/api/conversations/unread-count");
+    onUnreadCount(unread.count);
+  }
+
+  useEffect(() => {
+    void loadConversations().catch((err) => setError(err instanceof Error ? err.message : "Az üzenetek betöltése sikertelen."));
+    const poll = window.setInterval(() => void loadConversations().catch(() => undefined), 15_000);
+    return () => window.clearInterval(poll);
+  }, []);
+
+  return <>
+    {error && <p className="error">{error}</p>}
+    <MessengerPage
+      admin
+      conversations={conversations}
+      selectedConversationId={selectedConversationId}
+      viewer={user}
+      onSelect={(conversationId) => void selectConversation(conversationId)}
+      onSend={async (conversationId, body) => {
+        await api(`/api/conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ body }) });
+        await loadConversations();
+        const unread = await api<{ count: number }>("/api/conversations/unread-count");
+        onUnreadCount(unread.count);
+      }}
+    />
+  </>;
 }
 
 function ProductGrid({ products, favoriteIds, onToggleFavorite, onOpenDetail, tick }: {
@@ -1066,7 +1302,7 @@ function StoreProductCard({ product, isFavorite, onToggleFavorite, onOpenDetail,
   );
 }
 
-function ProductDetailPage({ product, pickups, reservations, isFavorite, earliestPickup, isAdmin, onClose, onToggleFavorite, onReserved, onAdminSaved }: {
+function ProductDetailPage({ product, pickups, reservations, isFavorite, earliestPickup, isAdmin, onClose, onToggleFavorite, onReserved, onAdminSaved, onAskTunde }: {
   product: Product;
   pickups: PickupOption[];
   reservations: Reservation[];
@@ -1077,6 +1313,7 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
   onToggleFavorite: () => void;
   onReserved: () => Promise<void>;
   onAdminSaved: () => Promise<void>;
+  onAskTunde: () => void;
 }) {
   const galleryImages = [productDisplayImage(product), ...visibleProductShareImages(product)].filter((image, index, images): image is ProductImage => Boolean(image) && images.findIndex((candidate) => candidate?.id === image?.id) === index);
   const [galleryIndex, setGalleryIndex] = useState(0);
@@ -1232,6 +1469,7 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
             })}
             <button className="secondary icon-text additional-reservation-choice" onClick={addSelection}><Plus size={18} /> További szín és méret választása</button>
           </div>
+          {!isAdmin && <button className="ask-tunde-button icon-text" onClick={onAskTunde}><MessageCircle size={19} /> Kérdezz Tündétől</button>}
           {error && <p className="error">{error}</p>}
           <button className="tdo-primary icon-text modal-reserve-button" disabled={busy || deadlineExpired} onClick={reserve}>
             <ShoppingBag size={18} /> {deadlineExpired ? "A foglalási határidő lejárt" : "Lefoglalom személyes átvételre"}
@@ -1264,6 +1502,7 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
 function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [view, setView] = useState<AdminView>("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [isStandalone, setIsStandalone] = useState(() => window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone));
   useEffect(() => {
     const media = window.matchMedia("(display-mode: standalone)");
@@ -1281,7 +1520,8 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
     { id: "orders", label: "5. Rendelők és rendelések" },
     { id: "pickup", label: "6. Személyes átvétel megadása" },
     { id: "deleted", label: "Törölt tételek" },
-    { id: "users", label: "Regisztrált felhasználók" }
+    { id: "users", label: "Regisztrált felhasználók" },
+    { id: "messenger", label: "Messenger" }
   ];
   const mobileViewIndex = adminViewOrder.findIndex((item) => item.id === view);
   const mobileViewLabel = mobileViewIndex >= 0 ? adminViewOrder[mobileViewIndex].label : "";
@@ -1297,6 +1537,14 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
     await api("/api/auth/logout", { method: "POST" });
     onLogout();
   }
+  useEffect(() => {
+    const loadUnreadCount = () => api<{ count: number }>("/api/conversations/unread-count")
+      .then((response) => setUnreadMessageCount(response.count))
+      .catch(() => undefined);
+    void loadUnreadCount();
+    const poll = window.setInterval(loadUnreadCount, 15_000);
+    return () => window.clearInterval(poll);
+  }, []);
   if (view === "storefront") {
     return <CustomerStorefront user={user} onLogout={onLogout} onBackToAdmin={() => setView("dashboard")} />;
   }
@@ -1324,6 +1572,7 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
           <button onClick={() => setView("storefront")} className="nav-storefront">Felhasználói nézet</button>
           <button onClick={() => setView("deleted")} className={`nav-deleted ${view === "deleted" ? "active" : ""}`}>Törölt tételek</button>
           <button onClick={() => setView("users")} className={view === "users" ? "active" : ""}>Regisztrált felhasználók</button>
+          <button onClick={() => setView("messenger")} className={`${view === "messenger" ? "active" : ""} ${unreadMessageCount > 0 ? "has-unread" : ""}`}>Messenger{unreadMessageCount > 0 ? ` (${unreadMessageCount})` : ""}</button>
         </nav>
         <button className="ghost icon-text" onClick={logout}><LogOut size={18} /> Kilépés</button>
       </aside>
@@ -1344,7 +1593,7 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
             <ArrowLeft size={18} /> Vissza a főmenübe
           </button>
         )}
-        {view === "dashboard" && <Dashboard onQuick={() => setView("quick")} onNew={() => setView("new")} onStorefront={() => setView("storefront")} onAi={() => setView("ai")} onShare={() => setView("share")} onCurrent={() => setView("current")} onOrders={() => setView("orders")} onPickup={() => setView("pickup")} />}
+        {view === "dashboard" && <Dashboard onQuick={() => setView("quick")} onNew={() => setView("new")} onStorefront={() => setView("storefront")} onAi={() => setView("ai")} onShare={() => setView("share")} onCurrent={() => setView("current")} onOrders={() => setView("orders")} onPickup={() => setView("pickup")} onMessenger={() => setView("messenger")} unreadMessageCount={unreadMessageCount} />}
         {view === "quick" && <QuickUpload onDone={() => setView("share")} onAi={() => setView("ai")} />}
         {view === "new" && <ProductWizard onDone={() => setView("ai")} />}
         {view === "ai" && <AiGenerationQueue />}
@@ -1354,6 +1603,7 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
         {view === "pickup" && <PickupSettings />}
         {view === "deleted" && <DeletedProducts />}
         {view === "users" && <RegisteredUsers />}
+        {view === "messenger" && <AdminMessenger user={user} onUnreadCount={setUnreadMessageCount} />}
       </main>
     </div>
   );
@@ -1414,7 +1664,7 @@ function PwaInstallPanel() {
   );
 }
 
-function Dashboard({ onQuick, onNew, onStorefront, onAi, onShare, onCurrent, onOrders, onPickup }: { onQuick: () => void; onNew: () => void; onStorefront: () => void; onAi: () => void; onShare: () => void; onCurrent: () => void; onOrders: () => void; onPickup: () => void }) {
+function Dashboard({ onQuick, onNew, onStorefront, onAi, onShare, onCurrent, onOrders, onPickup, onMessenger, unreadMessageCount }: { onQuick: () => void; onNew: () => void; onStorefront: () => void; onAi: () => void; onShare: () => void; onCurrent: () => void; onOrders: () => void; onPickup: () => void; onMessenger: () => void; unreadMessageCount: number }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
@@ -1455,6 +1705,7 @@ function Dashboard({ onQuick, onNew, onStorefront, onAi, onShare, onCurrent, onO
       </header>
       <div className="dashboard-actions">
         <button className="storefront-cta storefront-dashboard-cta icon-text" onClick={onStorefront}><Eye size={26} /> Felhasználói nézet</button>
+        <button className={`messenger-dashboard-cta icon-text ${unreadMessageCount > 0 ? "has-unread" : ""}`} onClick={onMessenger}><MessageCircle size={26} /> Messenger{unreadMessageCount > 0 ? ` (${unreadMessageCount})` : ""}</button>
       </div>
       <div className="dashboard-actions dashboard-main-actions">
         <button className="quick-upload-cta icon-text" onClick={onQuick}><Camera size={30} /> 0. Gyors feltöltés</button>

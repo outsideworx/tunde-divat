@@ -11,6 +11,7 @@ import { productRoutes } from "./routes/productRoutes.js";
 import { imageRoutes } from "./routes/imageRoutes.js";
 import { pickupRoutes } from "./routes/pickupRoutes.js";
 import { reservationRoutes } from "./routes/reservationRoutes.js";
+import { conversationRoutes } from "./routes/conversationRoutes.js";
 import { errorHandler } from "./utils/errors.js";
 
 export function createApp() {
@@ -77,6 +78,7 @@ export function createApp() {
   app.use("/api/products", productRoutes);
   app.use("/api/pickups", pickupRoutes);
   app.use("/api/reservations", reservationRoutes);
+  app.use("/api/conversations", conversationRoutes);
   app.use("/api/images", imageRoutes);
 
   if (env.WEB_DIST_DIR) {

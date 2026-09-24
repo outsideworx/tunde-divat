@@ -62,6 +62,8 @@ model User {
   isActive          Boolean       @default(true) @map("is_active")
   products          Product[]     @relation("ProductCreator")
   reservations      Reservation[]
+  conversations     Conversation[]
+  messages          ConversationMessage[]
   createdAt         DateTime      @default(now()) @map("created_at")
   updatedAt         DateTime      @updatedAt @map("updated_at")
 
@@ -91,6 +93,7 @@ model Product {
   images                  ProductImage[]
   generationJobs          GenerationJob[]
   reservations            Reservation[]
+  conversations           Conversation[]
   createdAt               DateTime        @default(now()) @map("created_at")
   updatedAt               DateTime        @updatedAt @map("updated_at")
 
@@ -203,4 +206,35 @@ model GenerationJob {
 
   @@index([productFk, status])
   @@map("generation_jobs")
+}
+
+model Conversation {
+  id        Int                   @id @default(autoincrement())
+  productFk Int                   @map("product_fk")
+  product   Product               @relation(fields: [productFk], references: [id], onDelete: Cascade)
+  userId    Int                   @map("user_id")
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  ConversationMessage[]
+  createdAt DateTime              @default(now()) @map("created_at")
+  updatedAt DateTime              @updatedAt @map("updated_at")
+
+  @@unique([productFk, userId])
+  @@index([userId, updatedAt])
+  @@index([productFk])
+  @@map("conversations")
+}
+
+model ConversationMessage {
+  id             Int          @id @default(autoincrement())
+  conversationFk Int          @map("conversation_fk")
+  conversation   Conversation @relation(fields: [conversationFk], references: [id], onDelete: Cascade)
+  senderId       Int          @map("sender_id")
+  sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  body           String
+  readAt         DateTime?    @map("read_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  @@index([conversationFk, createdAt])
+  @@index([senderId, readAt])
+  @@map("conversation_messages")
 }

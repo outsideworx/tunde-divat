@@ -10,7 +10,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   SESSION_SECRET: z.string().min(32),
   CORS_ORIGIN: z.string().url().default("http://localhost:5173"),
-  API_PORT: z.coerce.number().int().positive().default(4000),
+  API_PORT: z.coerce.number().int().positive().default(80),
   UPLOAD_DIR: z.string().default("./uploads"),
   WEB_DIST_DIR: z.string().optional(),
   MAX_UPLOAD_MB: z.coerce.number().int().positive().default(12),

@@ -13,6 +13,7 @@ import { pickupRoutes } from "./routes/pickupRoutes.js";
 import { reservationRoutes } from "./routes/reservationRoutes.js";
 import { conversationRoutes } from "./routes/conversationRoutes.js";
 import { errorHandler } from "./utils/errors.js";
+import { metricsRoutes } from "./routes/metricsRoutes.js";
 
 export function createApp() {
   const app = express();
@@ -61,7 +62,7 @@ export function createApp() {
   app.use((req, res, next) => {
     const start = Date.now();
     res.on("finish", () => {
-      if (req.path === "/api/health") return;
+      if (req.path === "/metrics") return;
       logger.info("request", {
         method: req.method,
         path: req.path,
@@ -73,7 +74,7 @@ export function createApp() {
     next();
   });
 
-  app.get("/api/health", (_req, res) => res.json({ ok: true }));
+  app.use("/metrics", metricsRoutes);
   app.use("/api/auth", authRoutes);
   app.use("/api/products", productRoutes);
   app.use("/api/pickups", pickupRoutes);

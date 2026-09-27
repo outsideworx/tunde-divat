@@ -76,7 +76,7 @@ npm run dev
 ```
 
 Frontend: `http://localhost:5173`  
-API: `http://localhost:4000`
+API: `http://localhost:80`
 
 ## API struktúra
 

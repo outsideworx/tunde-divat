@@ -61,6 +61,7 @@ model User {
   role              UserRole      @default(STAFF)
   isActive          Boolean       @default(true) @map("is_active")
   products          Product[]     @relation("ProductCreator")
+  bulkUploads       BulkUploadImage[] @relation("BulkUploadCreator")
   reservations      Reservation[]
   conversations     Conversation[]
   messages          ConversationMessage[]
@@ -76,6 +77,7 @@ model Product {
   productId               String          @map("product_id")
   productName             String?         @map("product_name")
   displayNumber           String          @map("display_number")
+  offerOrder              Int             @default(0) @map("offer_order")
   price                   Int
   category                String?
   color                   String?
@@ -101,6 +103,7 @@ model Product {
   // Add supplier/supplier_id later and replace this with supplier + product_id.
   @@unique([productId])
   @@index([status])
+  @@index([offerOrder])
   @@index([displayNumber])
   @@map("products")
 }
@@ -184,6 +187,8 @@ model ProductImage {
   height      Int?
   sortOrder   Int       @default(0) @map("sort_order")
   sourceImageId Int?    @map("source_image_id")
+  modelSize   String?   @map("model_size")
+  modelGender String?   @map("model_gender")
   isHidden    Boolean   @default(false) @map("is_hidden")
   aiArchived  Boolean   @default(false) @map("ai_archived")
   viewType    ImageViewType @default(AUTO) @map("view_type")
@@ -191,7 +196,24 @@ model ProductImage {
 
   @@index([productFk, imageType])
   @@index([productFk, sortOrder])
+  @@index([productFk, sourceImageId, modelSize, modelGender])
   @@map("product_images")
+}
+
+model BulkUploadImage {
+  id           Int           @id @default(autoincrement())
+  storagePath  String        @map("storage_path")
+  mimeType     String        @map("mime_type")
+  width        Int?
+  height       Int?
+  viewType     ImageViewType @default(AUTO) @map("view_type")
+  uploadedById Int?          @map("uploaded_by")
+  uploadedBy   User?         @relation("BulkUploadCreator", fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime      @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([uploadedById])
+  @@map("bulk_upload_images")
 }
 
 model GenerationJob {

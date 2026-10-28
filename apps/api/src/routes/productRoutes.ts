@@ -42,6 +42,20 @@ productRoutes.post(
 );
 
 productRoutes.put(
+  "/order",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const productIds = Array.isArray(req.body?.product_ids) && req.body.product_ids.every((value: unknown) => Number.isInteger(value))
+      ? req.body.product_ids as number[]
+      : null;
+    if (!productIds?.length || new Set(productIds).size !== productIds.length) {
+      throw new AppError(400, "Érvényes, ismétlésmentes terméklista szükséges a sorrendhez.");
+    }
+    res.json({ products: await products.reorderOfferings(productIds, req.body?.include_unpublished === true) });
+  })
+);
+
+productRoutes.put(
   "/:id/images/order",
   requireAdmin,
   asyncHandler(async (req, res) => {
@@ -129,7 +143,7 @@ productRoutes.post(
   generationLimiter,
   asyncHandler(async (req, res) => {
     const payload = generationPayloadSchema.parse(req.body ?? {});
-    res.json({ product: await products.generate(Number(req.params.id), payload.gender, payload.image_id) });
+    res.json({ product: await products.generate(Number(req.params.id), payload.gender, payload.image_id, payload.model_size) });
   })
 );
 

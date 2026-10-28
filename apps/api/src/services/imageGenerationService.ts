@@ -15,9 +15,9 @@ export type GarmentView = "FRONT" | "BACK" | "DETAIL" | "AUTO" | "OTHER";
 export class ImageGenerationService {
   constructor(private provider: "mock" | "openai" = "mock") {}
 
-  async generateMarketingBase(original: Buffer, gender: ModelGender = "female", viewType: GarmentView = "AUTO"): Promise<ImageGenerationResult> {
+  async generateMarketingBase(original: Buffer, gender: ModelGender = "female", viewType: GarmentView = "AUTO", modelSize?: string): Promise<ImageGenerationResult> {
     if (this.provider === "openai") {
-      return this.generateWithOpenAI(original, gender, viewType);
+      return this.generateWithOpenAI(original, gender, viewType, modelSize);
     }
     const composed = sharp(original).rotate().resize(1080, 1350, {
       fit: "contain",
@@ -34,7 +34,7 @@ export class ImageGenerationService {
     };
   }
 
-  private async generateWithOpenAI(original: Buffer, gender: ModelGender, viewType: GarmentView): Promise<ImageGenerationResult> {
+  private async generateWithOpenAI(original: Buffer, gender: ModelGender, viewType: GarmentView, modelSize?: string): Promise<ImageGenerationResult> {
     if (!env.OPENAI_API_KEY) {
       throw new Error("OPENAI_API_KEY is required when AI_PROVIDER=openai.");
     }
@@ -54,6 +54,9 @@ export class ImageGenerationService {
     const modelDescription = gender === "male"
       ? "Show the same garment on a natural-looking adult male model with a friendly, natural smile and relaxed, confident posture. Use a natural fashion pose, such as a subtle step or a relaxed standing pose."
       : "Show the same garment on a natural-looking adult female model with a friendly, natural smile and relaxed, elegant posture. Use a natural fashion pose, such as a subtle step or a relaxed standing pose.";
+    const sizeVariantDescription = modelSize
+      ? `Create this as a ${modelSize} size-variant illustration. Use a distinctly different adult model identity and facial appearance from other size variants, with natural body proportions that broadly suit this size. This is a general styling illustration, not an exact fit or measurement guarantee.`
+      : "Use a natural adult model identity appropriate for the garment.";
     const viewDescription: Record<GarmentView, string> = {
       FRONT: "The uploaded photo shows the front of the garment. The model must clearly show the garment from the front.",
       BACK: "The uploaded photo shows the back of the garment. The model must be posed so the garment's back is clearly visible.",
@@ -64,6 +67,7 @@ export class ImageGenerationService {
     form.append("prompt", [
       "Create a refined vertical ecommerce fashion photo from the uploaded clothing product reference.",
       modelDescription,
+      sizeVariantDescription,
       viewDescription[viewType],
       "Frame the model from at least knee level to full length where possible, with the garment clearly visible and naturally styled with simple, unobtrusive complementary clothing.",
       "Treat the uploaded garment as the exact product. Preserve its exact color palette, print placement and scale, cut, neckline, bow or tie details, sleeve shape, hemline, fabric drape, proportions, seams, and all visible construction details. Do not redesign, simplify, replace, or invent garment details.",

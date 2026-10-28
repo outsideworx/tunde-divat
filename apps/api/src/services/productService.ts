@@ -37,18 +37,21 @@ function shareImageIds(images: ProductWithRelations["images"]) {
   const latestFinalBySource = new Map<string, number>();
   for (const image of images) {
     if (image.imageType !== "FINAL") continue;
-    const key = image.sourceImageId == null ? "legacy" : String(image.sourceImageId);
+    const key = `${image.sourceImageId ?? "legacy"}:${image.modelSize ?? "base"}:${image.modelGender ?? "base"}`;
     const currentId = latestFinalBySource.get(key);
     if (currentId == null || image.id > currentId) latestFinalBySource.set(key, image.id);
   }
   const finalIds = new Set(latestFinalBySource.values());
-  const finalSourceIds = new Set(images.filter((image) => finalIds.has(image.id) && image.sourceImageId != null).map((image) => image.sourceImageId));
+  const finalVariantKeys = new Set(images
+    .filter((image) => finalIds.has(image.id))
+    .map((image) => `${image.sourceImageId ?? "legacy"}:${image.modelSize ?? "base"}:${image.modelGender ?? "base"}`));
   return images
     .filter((image) => {
       if (image.imageType === "ORIGINAL") return true;
       if (image.imageType === "FINAL") return finalIds.has(image.id);
       if (image.imageType !== "AI_GENERATED") return false;
-      return image.sourceImageId == null ? finalIds.size === 0 : !finalSourceIds.has(image.sourceImageId);
+      const key = `${image.sourceImageId ?? "legacy"}:${image.modelSize ?? "base"}:${image.modelGender ?? "base"}`;
+      return !finalVariantKeys.has(key);
     })
     .map((image) => image.id);
 }
@@ -77,8 +80,29 @@ export class ProductService {
     return prisma.product.findMany({
       where: status ? { status: status as never } : { status: { not: "ARCHIVED" } },
       include: includeProduct,
-      orderBy: { createdAt: "desc" }
+      orderBy: [{ offerOrder: "asc" }, { createdAt: "desc" }]
     });
+  }
+
+  async reorderOfferings(productIds: number[], includeUnpublished = false) {
+    const products = await prisma.product.findMany({
+      where: includeUnpublished
+        ? { status: { not: "ARCHIVED" }, images: { some: {} } }
+        : { status: { in: ["APPROVED", "PUBLISHED"] } },
+      select: { id: true }
+    });
+    const activeIds = products.map((product) => product.id).sort((a, b) => a - b);
+    const requestedIds = [...productIds].sort((a, b) => a - b);
+    if (activeIds.length !== requestedIds.length || activeIds.some((id, index) => id !== requestedIds[index])) {
+      throw new AppError(400, includeUnpublished
+        ? "A tesztmegosztás sorrendje csak az összes feltöltött termékkel együtt menthető."
+        : "A kínálati sorrend csak az összes aktív termékkel együtt menthető.");
+    }
+    await prisma.$transaction(productIds.map((id, index) => prisma.product.update({
+      where: { id },
+      data: { offerOrder: index }
+    })));
+    return this.list();
   }
 
   async get(id: number) {
@@ -262,7 +286,7 @@ export class ProductService {
     return this.get(id);
   }
 
-  async generate(id: number, gender: ModelGender = "female", originalImageId?: number) {
+  async generate(id: number, gender: ModelGender = "female", originalImageId?: number, modelSize?: string) {
     const product = await this.ensurePublicDisplayNumber(id);
     const statusBeforeGeneration = product.status;
     const original = originalImageId
@@ -270,6 +294,12 @@ export class ProductService {
       : product.images.find((image) => image.imageType === "ORIGINAL");
     if (!original) throw new AppError(400, "Original image is required before generation");
     if (original.viewType === "OTHER") throw new AppError(400, "Az Egyéb képtípus csak a galériában jelenik meg, AI-generálásra nem küldhető.");
+    if (modelSize && !product.sizes.some((size) => size.size === modelSize)) {
+      throw new AppError(400, "A kiválasztott méret nem tartozik ehhez a termékhez.");
+    }
+    if (modelSize && product.images.some((image) => image.imageType === "AI_GENERATED" && image.sourceImageId === original.id && image.modelSize === modelSize && image.modelGender === gender)) {
+      return product;
+    }
     const job = await prisma.generationJob.create({
       data: { productFk: id, status: "PROCESSING", provider: env.AI_PROVIDER }
     });
@@ -278,7 +308,7 @@ export class ProductService {
     }
     try {
       const originalBuffer = await this.storage.read(original.storagePath);
-      const generated = await this.ai.generateMarketingBase(originalBuffer, gender, original.viewType);
+      const generated = await this.ai.generateMarketingBase(originalBuffer, gender, original.viewType, modelSize);
       const aiStored = await this.storage.save(generated.buffer, "webp");
       await prisma.productImage.create({
         data: {
@@ -289,10 +319,12 @@ export class ProductService {
           width: generated.width,
           height: generated.height,
           sourceImageId: original.id,
+          modelSize,
+          modelGender: gender,
           viewType: original.viewType
         }
       });
-      await this.createFinalOverlay(id, generated.buffer, original.id, original.viewType);
+      await this.createFinalOverlay(id, generated.buffer, original.id, original.viewType, modelSize, gender);
       await prisma.generationJob.update({
         where: { id: job.id },
         data: { status: "COMPLETED", completedAt: new Date() }
@@ -316,7 +348,7 @@ export class ProductService {
     const aiImage = product.images.find((image) => image.imageType === "AI_GENERATED");
     if (!aiImage) throw new AppError(400, "AI generated image is required before overlay regeneration");
     const buffer = await this.storage.read(aiImage.storagePath);
-    await this.createFinalOverlay(id, buffer, aiImage.sourceImageId ?? undefined, aiImage.viewType);
+    await this.createFinalOverlay(id, buffer, aiImage.sourceImageId ?? undefined, aiImage.viewType, aiImage.modelSize ?? undefined, aiImage.modelGender ?? undefined);
     return this.get(id);
   }
 
@@ -421,7 +453,7 @@ export class ProductService {
     throw new AppError(500, "Nem sikerült automatikus Product ID-t kiosztani.");
   }
 
-  private async createFinalOverlay(id: number, sourceBuffer: Buffer, sourceImageId?: number, viewType: GarmentView = "AUTO") {
+  private async createFinalOverlay(id: number, sourceBuffer: Buffer, sourceImageId?: number, viewType: GarmentView = "AUTO", modelSize?: string, modelGender?: string) {
     const product = await this.get(id);
     const final = await this.overlay.apply({
       image: sourceBuffer,
@@ -439,6 +471,8 @@ export class ProductService {
         width: final.width,
         height: final.height,
         sourceImageId,
+        modelSize,
+        modelGender,
         viewType
       }
     });

@@ -122,7 +122,8 @@ export const inviteCodePayloadSchema = z.object({
 
 export const generationPayloadSchema = z.object({
   gender: z.enum(["female", "male"]).default("female"),
-  image_id: z.coerce.number().int().positive().optional()
+  image_id: z.coerce.number().int().positive().optional(),
+  model_size: z.enum(allowedSizes).optional()
 });
 
 export const adminUserUpdateSchema = z.object({
@@ -164,6 +165,8 @@ export type ProductImageDto = {
   mimeType: string;
   width: number | null;
   height: number | null;
+  modelSize: string | null;
+  modelGender: string | null;
   aiArchived: boolean;
   createdAt: string;
 };
@@ -191,6 +194,7 @@ export type ProductDto = {
   productId: string;
   productName: string | null;
   displayNumber: string;
+  offerOrder: number;
   price: number;
   category: string | null;
   color: string | null;

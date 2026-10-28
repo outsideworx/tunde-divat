@@ -89,6 +89,26 @@ describe("product lifecycle", () => {
     expect(Number(second)).toBe(Number(first) + 1);
   });
 
+  it("stores size and model gender on a size-variant generation", async () => {
+    const created = await request(ctx.app)
+      .post("/api/products")
+      .set("Cookie", cookie)
+      .send({ product_id: "SIZE-VARIANT", price: 5000, available_sizes: ["S", "M"] });
+    const id = created.body.product.id;
+    await request(ctx.app)
+      .post(`/api/products/${id}/image`)
+      .set("Cookie", cookie)
+      .attach("image", PNG_1x1, { filename: "variant.png", contentType: "image/png" });
+
+    const generated = await request(ctx.app)
+      .post(`/api/products/${id}/generate`)
+      .set("Cookie", cookie)
+      .send({ gender: "female", model_size: "S" });
+    expect(generated.status).toBe(200);
+    const sizeImage = generated.body.product.images.find((image: { imageType: string; modelSize?: string; modelGender?: string }) => image.imageType === "AI_GENERATED" && image.modelSize === "S");
+    expect(sizeImage?.modelGender).toBe("female");
+  });
+
   it("rejects a duplicate product_id with 409", async () => {
     const app = ctx.app;
     await request(app).post("/api/products").set("Cookie", cookie).send({ product_id: "DUP", price: 100, available_sizes: ["M"] });

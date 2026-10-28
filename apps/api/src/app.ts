@@ -12,6 +12,7 @@ import { imageRoutes } from "./routes/imageRoutes.js";
 import { pickupRoutes } from "./routes/pickupRoutes.js";
 import { reservationRoutes } from "./routes/reservationRoutes.js";
 import { conversationRoutes } from "./routes/conversationRoutes.js";
+import { bulkUploadRoutes } from "./routes/bulkUploadRoutes.js";
 import { errorHandler } from "./utils/errors.js";
 import { metricsRoutes } from "./routes/metricsRoutes.js";
 
@@ -80,6 +81,7 @@ export function createApp() {
   app.use("/api/pickups", pickupRoutes);
   app.use("/api/reservations", reservationRoutes);
   app.use("/api/conversations", conversationRoutes);
+  app.use("/api/bulk-uploads", bulkUploadRoutes);
   app.use("/api/images", imageRoutes);
 
   if (env.WEB_DIST_DIR) {

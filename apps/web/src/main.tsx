@@ -1,6 +1,6 @@
 import { Fragment, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowLeft, Ban, Camera, Check, CheckCheck, ChevronLeft, ChevronRight, Download, Eye, FolderCheck, Heart, KeyRound, LogOut, Menu, MessageCircle, PanelLeftClose, Plus, RefreshCcw, Search, Send, Share2, ShoppingBag, Sparkles, Trash2, Upload, Users } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Ban, Camera, Check, CheckCheck, ChevronLeft, ChevronRight, Download, Eye, FolderCheck, GripVertical, Heart, Images, KeyRound, LogOut, Menu, MessageCircle, PanelLeftClose, Plus, RefreshCcw, Search, Send, Share2, ShoppingBag, Sparkles, Trash2, Upload, Users } from "lucide-react";
 import { allowedSizes, formatHuf, type ReservationStatus } from "@fashion-mvp/shared";
 import "./styles.css";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -24,12 +24,13 @@ function getApiBase() {
 const API = getApiBase();
 
 type ImageViewType = "FRONT" | "BACK" | "DETAIL" | "AUTO" | "OTHER";
-type ProductImage = { id: number; imageType: "ORIGINAL" | "AI_GENERATED" | "FINAL"; width?: number; height?: number; sortOrder?: number; sourceImageId?: number | null; isHidden?: boolean; aiArchived?: boolean; viewType?: ImageViewType };
+type ProductImage = { id: number; imageType: "ORIGINAL" | "AI_GENERATED" | "FINAL"; width?: number; height?: number; sortOrder?: number; sourceImageId?: number | null; modelSize?: string | null; modelGender?: "female" | "male" | null; isHidden?: boolean; aiArchived?: boolean; viewType?: ImageViewType };
 type Product = {
   id: number;
   productId: string;
   productName?: string | null;
   displayNumber: string;
+  offerOrder?: number;
   price: number;
   status: string;
   category?: string;
@@ -43,6 +44,7 @@ type Product = {
   images: ProductImage[];
   createdAt: string;
 };
+type BulkUploadImage = { id: number; width?: number | null; height?: number | null; viewType: ImageViewType; createdAt: string };
 type PickupOption = { id: number; address: string; startAt: string; endAt: string; isActive: boolean };
 type Reservation = {
   id: number;
@@ -93,12 +95,13 @@ type RegisteredUserForm = {
   is_active: boolean;
 };
 type Step = "photo" | "data" | "saved";
-type View = "dashboard" | "storefront" | "quick" | "new" | "ai" | "share" | "current" | "orders" | "pickup" | "deleted" | "messenger";
+type View = "dashboard" | "storefront" | "quick" | "bulk" | "new" | "ai" | "share" | "share-test" | "current" | "orders" | "pickup" | "deleted" | "messenger";
 type AdminView = View | "users";
 type AuthMode = "login" | "register";
 type StoreView = "catalog" | "reservations" | "messages" | "favorites";
 type ShareVariant = "raw" | "generated" | "multi";
 type ModelGender = "female" | "male";
+type ProductSort = "manual" | "name-asc" | "name-desc" | "number-asc" | "number-desc";
 type ReservationSelection = { id: number; color: string; size: string; quantity: number };
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -153,6 +156,10 @@ function imageUrl(image?: ProductImage) {
   return image ? `${API}/api/images/${image.id}` : "";
 }
 
+function bulkImageUrl(image: BulkUploadImage) {
+  return `${API}/api/images/bulk/${image.id}`;
+}
+
 function imageViewLabel(viewType?: ImageViewType) {
   return imageViewOptions.find((option) => option.value === (viewType ?? "AUTO"))?.label ?? "Automatikus felismerés";
 }
@@ -172,7 +179,15 @@ function productOriginalImages(product: Product) {
 
 function imageNeedsAiGeneration(product: Product, image: ProductImage) {
   if (image.aiArchived || image.isHidden || image.viewType === "OTHER") return false;
-  return !product.images.some((candidate) => candidate.sourceImageId === image.id && (candidate.imageType === "AI_GENERATED" || candidate.imageType === "FINAL"));
+  return !product.images.some((candidate) => candidate.sourceImageId === image.id && candidate.modelSize == null && (candidate.imageType === "AI_GENERATED" || candidate.imageType === "FINAL"));
+}
+
+function imageEligibleForAi(image: ProductImage) {
+  return !image.aiArchived && !image.isHidden && image.viewType !== "OTHER";
+}
+
+function imageNeedsSizeVariant(product: Product, image: ProductImage, size: string, gender: ModelGender) {
+  return imageEligibleForAi(image) && !product.images.some((candidate) => candidate.sourceImageId === image.id && candidate.modelSize === size && candidate.modelGender === gender && (candidate.imageType === "AI_GENERATED" || candidate.imageType === "FINAL"));
 }
 
 function visibleProductOriginalImages(product: Product) {
@@ -183,17 +198,18 @@ function productShareImages(product: Product) {
   const finals = product.images.filter((image) => image.imageType === "FINAL");
   const latestFinalBySource = new Map<string, ProductImage>();
   for (const image of finals) {
-    const key = image.sourceImageId == null ? "legacy" : String(image.sourceImageId);
+    const key = `${image.sourceImageId ?? "legacy"}:${image.modelSize ?? "base"}:${image.modelGender ?? "base"}`;
     const current = latestFinalBySource.get(key);
     if (!current || image.id > current.id) latestFinalBySource.set(key, image);
   }
   const finalIds = new Set([...latestFinalBySource.values()].map((image) => image.id));
-  const finalSourceIds = new Set([...latestFinalBySource.values()].map((image) => image.sourceImageId).filter((id): id is number => id != null));
+  const finalVariantKeys = new Set([...latestFinalBySource.values()].map((image) => `${image.sourceImageId ?? "legacy"}:${image.modelSize ?? "base"}:${image.modelGender ?? "base"}`));
   return product.images.filter((image) => {
     if (image.imageType === "ORIGINAL") return true;
     if (image.imageType === "FINAL") return finalIds.has(image.id);
     if (image.imageType !== "AI_GENERATED") return false;
-    return image.sourceImageId == null ? finalIds.size === 0 : !finalSourceIds.has(image.sourceImageId);
+    const key = `${image.sourceImageId ?? "legacy"}:${image.modelSize ?? "base"}:${image.modelGender ?? "base"}`;
+    return !finalVariantKeys.has(key);
   });
 }
 
@@ -346,11 +362,61 @@ function sortedProductSizes(product: Product, color?: string | null) {
     .sort((a, b) => allowedSizes.indexOf(a.size as (typeof allowedSizes)[number]) - allowedSizes.indexOf(b.size as (typeof allowedSizes)[number]));
 }
 
+function productSizeOptions(product: Product) {
+  return [...new Set(product.sizes.map((item) => item.size))]
+    .sort((a, b) => allowedSizes.indexOf(a as (typeof allowedSizes)[number]) - allowedSizes.indexOf(b as (typeof allowedSizes)[number]));
+}
+
 function formatProductSizes(product: Product, includeQuantity = false) {
   const colors = productColors(product);
   const formatSize = (item: Product["sizes"][number]) => `${item.size}${includeQuantity && item.quantity != null ? ` (${item.quantity} db)` : ""}`;
   if (!colors.length) return sortedProductSizes(product).map(formatSize).join("; ");
   return colors.map((color) => `${color}: ${sortedProductSizes(product, color).map(formatSize).join(", ")}`).join("; ");
+}
+
+function filterAndSortProducts(products: Product[], query: string, sort: ProductSort) {
+  const normalizedQuery = query.trim().toLocaleLowerCase("hu-HU");
+  const filtered = normalizedQuery
+    ? products.filter((product) => [product.productId, product.productName, product.category, product.description, product.displayNumber]
+      .filter(Boolean)
+      .join(" ")
+      .toLocaleLowerCase("hu-HU")
+      .includes(normalizedQuery))
+    : products;
+  if (sort === "manual") return filtered;
+  return [...filtered].sort((first, second) => {
+    if (sort === "name-asc" || sort === "name-desc") {
+      const comparison = (first.productName || first.productId).localeCompare(second.productName || second.productId, "hu");
+      return sort === "name-asc" ? comparison : -comparison;
+    }
+    const comparison = Number(first.displayNumber) - Number(second.displayNumber);
+    return sort === "number-asc" ? comparison : -comparison;
+  });
+}
+
+const productSortOptions: { value: ProductSort; label: string }[] = [
+  { value: "manual", label: "Webshop sorrend" },
+  { value: "name-asc", label: "A-Z" },
+  { value: "name-desc", label: "Z-A" },
+  { value: "number-asc", label: "Szám szerint felfelé" },
+  { value: "number-desc", label: "Szám szerint lefelé" }
+];
+
+function ProductListTools({ query, onQueryChange, sort, onSortChange }: { query: string; onQueryChange: (value: string) => void; sort: ProductSort; onSortChange: (value: ProductSort) => void }) {
+  const selectedSort = productSortOptions.find((option) => option.value === sort)?.label ?? "Rendezés";
+  return <section className="panel product-list-tools">
+    <form className="product-search-field" onSubmit={(event) => event.preventDefault()}>
+      <Search size={18} />
+      <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Termék keresése" />
+      <button type="submit" className="secondary product-search-button">Keresés</button>
+    </form>
+    <details className="product-sort-menu">
+      <summary className="secondary">Rendezés: {selectedSort}</summary>
+      <div>
+        {productSortOptions.map((option) => <button type="button" className={sort === option.value ? "active" : ""} onClick={(event) => { onSortChange(option.value); event.currentTarget.closest("details")?.removeAttribute("open"); }} key={option.value}>{option.label}</button>)}
+      </div>
+    </details>
+  </section>;
 }
 
 function ProductSizeList({ product }: { product: Product }) {
@@ -574,7 +640,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
 
   return (
     <main className="auth-shell">
-      <span className="build-version">ver.: 1.06</span>
+      <span className="build-version">ver.: 1.1</span>
       <section className="brand-panel">
         <span className="sr-only">Tünde Divat Online</span>
       </section>
@@ -1501,6 +1567,7 @@ function ProductDetailPage({ product, pickups, reservations, isFavorite, earlies
 
 function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [view, setView] = useState<AdminView>("dashboard");
+  const [bulkSelection, setBulkSelection] = useState<BulkUploadImage[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [isStandalone, setIsStandalone] = useState(() => window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone));
@@ -1513,12 +1580,14 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
   }, []);
   const adminViewOrder: { id: AdminView; label: string }[] = [
     { id: "quick", label: "0. Gyors feltöltés" },
-    { id: "new", label: "1. Új termék" },
-    { id: "ai", label: "2. AI-generálás" },
-    { id: "share", label: "3. Megosztás" },
-    { id: "current", label: "4. Jelenlegi kínálat" },
-    { id: "orders", label: "5. Rendelők és rendelések" },
-    { id: "pickup", label: "6. Személyes átvétel megadása" },
+    { id: "bulk", label: "0.5 Ömlesztett feltöltés" },
+    { id: "new", label: "1. Feltöltés (részletes)" },
+    { id: "share-test", label: "2. Eszközkezelés" },
+    { id: "current", label: "3. Jelenlegi kínálat" },
+    { id: "orders", label: "4. Rendelők és rendelések" },
+    { id: "pickup", label: "5. Személyes átvétel megadása" },
+    { id: "ai", label: "AI-generálás (régi)" },
+    { id: "share", label: "Megosztható képek (régi)" },
     { id: "deleted", label: "Törölt tételek" },
     { id: "users", label: "Regisztrált felhasználók" },
     { id: "messenger", label: "Messenger" }
@@ -1536,6 +1605,10 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
   async function logout() {
     await api("/api/auth/logout", { method: "POST" });
     onLogout();
+  }
+  function openDetailedUpload() {
+    setBulkSelection([]);
+    setView("new");
   }
   useEffect(() => {
     const loadUnreadCount = () => api<{ count: number }>("/api/conversations/unread-count")
@@ -1562,17 +1635,19 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
         </div>
         <nav>
           <button onClick={() => setView("dashboard")} className={view === "dashboard" ? "active" : ""}>Dashboard</button>
-          <button onClick={() => setView("quick")} className={view === "quick" ? "active" : ""}>0. Gyors feltöltés</button>
-          <button onClick={() => setView("new")} className={view === "new" ? "active" : ""}>1. Új termék</button>
-          <button onClick={() => setView("ai")} className={view === "ai" ? "active" : ""}>2. AI-generálás</button>
-          <button onClick={() => setView("share")} className={view === "share" ? "active" : ""}>3. Megosztás</button>
-          <button onClick={() => setView("current")} className={view === "current" ? "active" : ""}>4. Jelenlegi kínálat</button>
-          <button onClick={() => setView("orders")} className={view === "orders" ? "active" : ""}>5. Rendelők és rendelések</button>
-          <button onClick={() => setView("pickup")} className={view === "pickup" ? "active" : ""}>6. Személyes átvétel megadása</button>
           <button onClick={() => setView("storefront")} className="nav-storefront">Felhasználói nézet</button>
+          <button onClick={() => setView("messenger")} className={`${view === "messenger" ? "active" : ""} ${unreadMessageCount > 0 ? "has-unread" : ""}`}>Messenger{unreadMessageCount > 0 ? ` (${unreadMessageCount})` : ""}</button>
+          <button onClick={() => setView("quick")} className={view === "quick" ? "active" : ""}>0. Gyors feltöltés</button>
+          <button onClick={() => setView("bulk")} className={view === "bulk" ? "active" : ""}>0.5 Ömlesztett feltöltés</button>
+          <button onClick={openDetailedUpload} className={view === "new" ? "active" : ""}>1. Feltöltés (részletes)</button>
+          <button onClick={() => setView("share-test")} className={view === "share-test" ? "active" : ""}>2. Eszközkezelés</button>
+          <button onClick={() => setView("current")} className={view === "current" ? "active" : ""}>3. Jelenlegi kínálat</button>
+          <button onClick={() => setView("orders")} className={view === "orders" ? "active" : ""}>4. Rendelők és rendelések</button>
+          <button onClick={() => setView("pickup")} className={view === "pickup" ? "active" : ""}>5. Személyes átvétel megadása</button>
+          <button onClick={() => setView("ai")} className={view === "ai" ? "active" : ""}>AI-generálás (régi)</button>
+          <button onClick={() => setView("share")} className={view === "share" ? "active" : ""}>Megosztható képek (régi)</button>
           <button onClick={() => setView("deleted")} className={`nav-deleted ${view === "deleted" ? "active" : ""}`}>Törölt tételek</button>
           <button onClick={() => setView("users")} className={view === "users" ? "active" : ""}>Regisztrált felhasználók</button>
-          <button onClick={() => setView("messenger")} className={`${view === "messenger" ? "active" : ""} ${unreadMessageCount > 0 ? "has-unread" : ""}`}>Messenger{unreadMessageCount > 0 ? ` (${unreadMessageCount})` : ""}</button>
         </nav>
         <button className="ghost icon-text" onClick={logout}><LogOut size={18} /> Kilépés</button>
       </aside>
@@ -1593,11 +1668,13 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
             <ArrowLeft size={18} /> Vissza a főmenübe
           </button>
         )}
-        {view === "dashboard" && <Dashboard onQuick={() => setView("quick")} onNew={() => setView("new")} onStorefront={() => setView("storefront")} onAi={() => setView("ai")} onShare={() => setView("share")} onCurrent={() => setView("current")} onOrders={() => setView("orders")} onPickup={() => setView("pickup")} onMessenger={() => setView("messenger")} unreadMessageCount={unreadMessageCount} />}
+        {view === "dashboard" && <Dashboard onQuick={() => setView("quick")} onBulk={() => setView("bulk")} onNew={openDetailedUpload} onStorefront={() => setView("storefront")} onAi={() => setView("ai")} onShare={() => setView("share")} onShareTest={() => setView("share-test")} onCurrent={() => setView("current")} onOrders={() => setView("orders")} onPickup={() => setView("pickup")} onMessenger={() => setView("messenger")} unreadMessageCount={unreadMessageCount} />}
         {view === "quick" && <QuickUpload onDone={() => setView("share")} onAi={() => setView("ai")} />}
-        {view === "new" && <ProductWizard onDone={() => setView("ai")} />}
+        {view === "bulk" && <BulkUpload onContinue={(images) => { setBulkSelection(images); setView("new"); }} />}
+        {view === "new" && <ProductWizard onDone={() => setView("ai")} bulkImages={bulkSelection} onBackToBulk={() => setView("bulk")} onBulkConsumed={() => setBulkSelection([])} />}
         {view === "ai" && <AiGenerationQueue />}
         {view === "share" && <ShareCenter />}
+        {view === "share-test" && <ShareTestCenter />}
         {view === "current" && <CurrentOfferings />}
         {view === "orders" && <Orders />}
         {view === "pickup" && <PickupSettings />}
@@ -1664,7 +1741,7 @@ function PwaInstallPanel() {
   );
 }
 
-function Dashboard({ onQuick, onNew, onStorefront, onAi, onShare, onCurrent, onOrders, onPickup, onMessenger, unreadMessageCount }: { onQuick: () => void; onNew: () => void; onStorefront: () => void; onAi: () => void; onShare: () => void; onCurrent: () => void; onOrders: () => void; onPickup: () => void; onMessenger: () => void; unreadMessageCount: number }) {
+function Dashboard({ onQuick, onBulk, onNew, onStorefront, onAi, onShare, onShareTest, onCurrent, onOrders, onPickup, onMessenger, unreadMessageCount }: { onQuick: () => void; onBulk: () => void; onNew: () => void; onStorefront: () => void; onAi: () => void; onShare: () => void; onShareTest: () => void; onCurrent: () => void; onOrders: () => void; onPickup: () => void; onMessenger: () => void; unreadMessageCount: number }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
@@ -1709,27 +1786,24 @@ function Dashboard({ onQuick, onNew, onStorefront, onAi, onShare, onCurrent, onO
       </div>
       <div className="dashboard-actions dashboard-main-actions">
         <button className="quick-upload-cta icon-text" onClick={onQuick}><Camera size={30} /> 0. Gyors feltöltés</button>
-        <button className="new-product-cta primary icon-text" onClick={onNew}><Plus size={30} /> 1. Új termék</button>
+        <button className="bulk-upload-cta icon-text" onClick={onBulk}><Images size={30} /> 0.5 Ömlesztett feltöltés</button>
+        <button className="new-product-cta primary" onClick={onNew}>1. Feltöltés (részletes)</button>
       </div>
       <section className="dashboard-list">
-        <button className="dashboard-row" onClick={onAi}>
-          <span>2. AI-generálásra vár</span>
-          <strong>{waitingForAi.length}</strong>
-        </button>
-        <button className="dashboard-row" onClick={onShare}>
-          <span>3. Megosztható képek</span>
-          <strong>{aiGenerated.length}</strong>
-        </button>
-        <button className="dashboard-row" onClick={onCurrent}>
-          <span>4. Jelenlegi kínálat</span>
-          <strong>{current.length}</strong>
-        </button>
-        <button className="dashboard-row" onClick={onOrders}>
-          <span>5. Rendelők és rendelések</span>
+        <button className="dashboard-row dashboard-tools-cta" onClick={onShareTest}>
+          <span>2. Eszközkezelés</span>
           <strong>→</strong>
         </button>
-        <button className="dashboard-row" onClick={onPickup}>
-          <span>6. Személyes átvétel megadása</span>
+        <button className="dashboard-row dashboard-current-cta" onClick={onCurrent}>
+          <span>3. Jelenlegi kínálat</span>
+          <strong>{current.length}</strong>
+        </button>
+        <button className="dashboard-row dashboard-orders-cta" onClick={onOrders}>
+          <span>4. Rendelők és rendelések</span>
+          <strong>→</strong>
+        </button>
+        <button className="dashboard-row dashboard-pickup-cta" onClick={onPickup}>
+          <span>5. Személyes átvétel megadása</span>
           <strong>→</strong>
         </button>
       </section>
@@ -1749,6 +1823,16 @@ function Dashboard({ onQuick, onNew, onStorefront, onAi, onShare, onCurrent, onO
           </form>
         )}
         <PwaInstallPanel />
+      </section>
+      <section className="dashboard-list dashboard-legacy-actions" aria-label="Korábbi admin funkciók">
+        <button className="dashboard-row dashboard-legacy-cta" onClick={onAi}>
+          <span>AI-generálás (régi)</span>
+          <strong>{waitingForAi.length}</strong>
+        </button>
+        <button className="dashboard-row dashboard-legacy-cta" onClick={onShare}>
+          <span>Megosztható képek (régi)</span>
+          <strong>{aiGenerated.length}</strong>
+        </button>
       </section>
     </>
   );
@@ -2003,7 +2087,120 @@ function QuickUpload({ onDone, onAi }: { onDone: () => void; onAi: () => void })
   );
 }
 
-function ProductWizard({ onDone }: { onDone: () => void }) {
+function BulkUpload({ onContinue }: { onContinue: (images: BulkUploadImage[]) => void }) {
+  const [images, setImages] = useState<BulkUploadImage[]>([]);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [viewTypes, setViewTypes] = useState<Record<number, ImageViewType>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function load() {
+    try {
+      const response = await api<{ images: BulkUploadImage[] }>("/api/bulk-uploads");
+      setImages(response.images);
+      setViewTypes((current) => Object.fromEntries(response.images.map((image) => [image.id, current[image.id] ?? image.viewType])));
+      setSelectedIds((current) => current.filter((id) => response.images.some((image) => image.id === id)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "A tárolt képek betöltése sikertelen.");
+    }
+  }
+
+  useEffect(() => { void load(); }, []);
+
+  async function upload(files: FileList | null) {
+    const selected = files ? Array.from(files) : [];
+    if (!selected.length) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const data = new FormData();
+      selected.forEach((file) => data.append("images", file));
+      const response = await api<{ images: BulkUploadImage[] }>("/api/bulk-uploads/images", { method: "POST", body: data });
+      setMessage(`${response.images.length} kép bekerült az ömlesztett tárolóba.`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "A képfeltöltés sikertelen.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(image: BulkUploadImage) {
+    setBusy(true);
+    setError("");
+    try {
+      await api<{ ok: boolean }>(`/api/bulk-uploads/${image.id}`, { method: "DELETE" });
+      setMessage("A kép törölve a tárolóból.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "A kép törlése sikertelen.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggle(id: number) {
+    setSelectedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  function continueToDetails() {
+    const selected = images.filter((image) => selectedIds.includes(image.id));
+    if (!selected.length) return setError("Válassz ki legalább egy képet a részletes feltöltéshez.");
+    if (selected.length > 5) return setError("Egy termékhez legfeljebb 5 képet választhatsz ki.");
+    onContinue(selected.map((image) => ({ ...image, viewType: viewTypes[image.id] ?? image.viewType })));
+  }
+
+  return <section className="wizard bulk-upload">
+    <header className="topbar"><h1>Ömlesztett feltöltés</h1></header>
+    <section className="panel bulk-upload-intro">
+      <div>
+        <h2>Képtároló</h2>
+        <p>Itt több fotót is feltölthetsz egyszerre. A képek megmaradnak, amíg ki nem választod őket egy részletes termékfeltöltéshez.</p>
+      </div>
+      <div className="bulk-upload-actions">
+        <label className="primary icon-text">
+          <Images size={22} /> Képek kiválasztása
+          <input hidden type="file" accept="image/*,.heic,.heif" multiple disabled={busy} onClick={(event) => { event.currentTarget.value = ""; }} onChange={(event) => void upload(event.target.files)} />
+        </label>
+        <label className="secondary icon-text">
+          <Camera size={22} /> Fotó készítése
+          <input hidden type="file" accept="image/*,.heic,.heif" capture="environment" disabled={busy} onClick={(event) => { event.currentTarget.value = ""; }} onChange={(event) => void upload(event.target.files)} />
+        </label>
+      </div>
+    </section>
+    {error && <p className="error">{error}</p>}
+    {message && <p className="success">{message}</p>}
+    <section className="panel bulk-upload-library">
+      <div className="bulk-upload-library-head">
+        <div><h2>Tárolt képek</h2><span>{images.length} kép vár kiválasztásra</span></div>
+        <button className="primary" type="button" disabled={busy || !selectedIds.length} onClick={continueToDetails}>Tovább az adatokhoz ({selectedIds.length})</button>
+      </div>
+      {images.length ? <div className="bulk-upload-list">
+        {images.map((image) => <article className={`bulk-upload-item ${selectedIds.includes(image.id) ? "selected" : ""}`} key={image.id}>
+          <label className="bulk-upload-select">
+            <input type="checkbox" checked={selectedIds.includes(image.id)} disabled={busy} onChange={() => toggle(image.id)} />
+            <img src={bulkImageUrl(image)} alt={`Tárolt kép ${image.id}`} />
+          </label>
+          <div>
+            <strong>Kép #{image.id}</strong>
+            <small>{new Date(image.createdAt).toLocaleString("hu-HU")}</small>
+          </div>
+          <label>
+            <span>Nézet</span>
+            <select value={viewTypes[image.id] ?? image.viewType} disabled={busy} onChange={(event) => setViewTypes((current) => ({ ...current, [image.id]: event.target.value as ImageViewType }))}>
+              {imageViewOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <button type="button" className="danger" disabled={busy} onClick={() => void remove(image)}>Törlés</button>
+        </article>)}
+      </div> : <EmptyState title="Még nincs kép az ömlesztett tárolóban." />}
+    </section>
+  </section>;
+}
+
+function ProductWizard({ onDone, bulkImages = [], onBackToBulk, onBulkConsumed }: { onDone: () => void; bulkImages?: BulkUploadImage[]; onBackToBulk: () => void; onBulkConsumed: () => void }) {
   const [step, setStep] = useState<Step>("photo");
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
@@ -2024,6 +2221,10 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (bulkImages.length) setStep("data");
+  }, [bulkImages]);
 
   function pick(next: FileList | null) {
     const selected = next ? Array.from(next) : [];
@@ -2059,12 +2260,25 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
         })
       });
       let uploadedProduct = created.product;
-      for (const [index, file] of files.entries()) {
-        const fd = new FormData();
-        fd.append("image", file);
-        fd.append("view_type", viewTypes[index] ?? "AUTO");
-        const uploaded = await api<{ product: Product }>(`/api/products/${created.product.id}/image`, { method: "POST", body: fd });
+      if (bulkImages.length) {
+        const uploaded = await api<{ product: Product }>("/api/bulk-uploads/consume", {
+          method: "POST",
+          body: JSON.stringify({
+            product_id: created.product.id,
+            image_ids: bulkImages.map((image) => image.id),
+            view_types: Object.fromEntries(bulkImages.map((image) => [image.id, image.viewType]))
+          })
+        });
         uploadedProduct = uploaded.product;
+        onBulkConsumed();
+      } else {
+        for (const [index, file] of files.entries()) {
+          const fd = new FormData();
+          fd.append("image", file);
+          fd.append("view_type", viewTypes[index] ?? "AUTO");
+          const uploaded = await api<{ product: Product }>(`/api/products/${created.product.id}/image`, { method: "POST", body: fd });
+          uploadedProduct = uploaded.product;
+        }
       }
       setProduct(uploadedProduct);
       setStep("saved");
@@ -2075,12 +2289,12 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
     }
   }
 
-  const original = product?.images.find((img) => img.imageType === "ORIGINAL");
+  const originals = product ? productOriginalImages(product) : [];
 
   return (
     <section className="wizard">
       <header className="topbar">
-        <h1>Új termék</h1>
+        <h1>Feltöltés (részletes)</h1>
       </header>
       <Stepper step={step} />
       {error && <p className="error">{error}</p>}
@@ -2139,14 +2353,18 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
             <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
           </label>
           <div className="button-row wide">
-            <button className="secondary" onClick={() => setStep("photo")}>Vissza</button>
-            <button className="primary" disabled={busy} onClick={createAndUpload}>Mentés és tovább az AI-generáláshoz</button>
+            <button className="secondary" onClick={() => bulkImages.length ? onBackToBulk() : setStep("photo")}>Vissza</button>
+            <button className="primary" disabled={busy} onClick={createAndUpload}>Mentés</button>
           </div>
         </div>
       )}
       {step === "saved" && product && (
         <div className="panel summary">
-          {original ? <img src={imageUrl(original)} alt="Eredeti kép" /> : <div className="empty-state">Ehhez a termékhez még nincs feltöltött kép.</div>}
+          {originals.length ? (
+            <div className="summary-gallery">
+              {originals.map((image, index) => <img key={image.id} src={imageUrl(image)} alt={`Feltöltött kép ${index + 1}`} />)}
+            </div>
+          ) : <div className="empty-state">Ehhez a termékhez még nincs feltöltött kép.</div>}
           <div>
             <h2>Termék mentve</h2>
             <dl>
@@ -2158,7 +2376,7 @@ function ProductWizard({ onDone }: { onDone: () => void }) {
             </dl>
             <div className="button-row">
               <button className="secondary" onClick={() => setStep("data")}>Adatok módosítása</button>
-              <button className="primary" onClick={onDone}>Tovább az AI-generáláshoz</button>
+            <button className="primary" onClick={onDone}>Mentés</button>
             </div>
           </div>
         </div>
@@ -2441,11 +2659,15 @@ function AiGenerationQueue() {
 
   async function load() {
     const res = await api<{ products: Product[] }>("/api/products");
-    const queue = res.products.filter((product) => productOriginalImages(product).some((image) => imageNeedsAiGeneration(product, image)));
+    const queue = res.products.filter((product) => {
+      const originals = productOriginalImages(product).filter(imageEligibleForAi);
+      const sizes = productSizeOptions(product);
+      return originals.some((image) => imageNeedsAiGeneration(product, image)) || (sizes.length > 1 && originals.some((image) => sizes.some((size) => imageNeedsSizeVariant(product, image, size, "female") || imageNeedsSizeVariant(product, image, size, "male"))));
+    });
     const archived = res.products.filter((product) => productOriginalImages(product).some((image) => image.aiArchived));
     setProducts(queue);
     setArchivedProducts(archived);
-    const imageIds = queue.flatMap((product) => productOriginalImages(product).filter((image) => imageNeedsAiGeneration(product, image)).map((image) => image.id));
+    const imageIds = queue.flatMap((product) => productOriginalImages(product).filter(imageEligibleForAi).map((image) => image.id));
     setSelectedImageIds((current) => current.length ? current.filter((id) => imageIds.includes(id)) : imageIds);
   }
 
@@ -2458,14 +2680,14 @@ function AiGenerationQueue() {
     return () => window.clearInterval(timer);
   }, []);
 
-  async function generate(product: Product, gender: ModelGender, imageId?: number, signal?: AbortSignal) {
+  async function generate(product: Product, gender: ModelGender, imageId?: number, signal?: AbortSignal, modelSize?: string) {
     setBusyId(product.id);
     setMessage("");
     setError("");
     try {
       await api<{ product: Product }>(`/api/products/${product.id}/generate`, {
         method: "POST",
-        body: JSON.stringify({ gender, image_id: imageId }),
+        body: JSON.stringify({ gender, image_id: imageId, model_size: modelSize }),
         signal
       });
       await load();
@@ -2541,6 +2763,40 @@ function AiGenerationQueue() {
     }
   }
 
+  async function generateAllSizes(product: Product, gender: ModelGender) {
+    const sizes = productSizeOptions(product);
+    if (sizes.length < 2) return;
+    const images = productOriginalImages(product).filter((image) => imageEligibleForAi(image) && selectedImageIds.includes(image.id));
+    const queue = sizes.flatMap((size) => images.filter((image) => imageNeedsSizeVariant(product, image, size, gender)).map((image) => ({ image, size })));
+    if (!queue.length) return setError("A kijelölt képekhez minden választott méretváltozat már elkészült.");
+    const label = gender === "female" ? "Nő" : "Férfi";
+    activeAiBatch.stopRequested = false;
+    activeAiBatch.running = true;
+    setBulkBusy(true);
+    setError("");
+    try {
+      for (let index = 0; index < queue.length; index += 1) {
+        if (activeAiBatch.stopRequested) break;
+        const { image, size } = queue[index];
+        setMessage(`Méret szerinti generálás (${label}): ${index + 1}/${queue.length} - ${size}`);
+        const controller = new AbortController();
+        activeAiBatch.controller = controller;
+        await generate(product, gender, image.id, controller.signal, size);
+        activeAiBatch.controller = null;
+      }
+      setMessage(activeAiBatch.stopRequested ? "A méret szerinti generálás leállítva." : `Elkészült (${label}): ${queue.length} méretváltozat.`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Méret szerinti generálási hiba.");
+      await load();
+    } finally {
+      setBusyId(null);
+      setBulkBusy(false);
+      activeAiBatch.running = false;
+      activeAiBatch.controller = null;
+    }
+  }
+
   async function setAiArchive(product: Product, imageIds: number[], aiArchived: boolean) {
     setError("");
     try {
@@ -2574,14 +2830,14 @@ function AiGenerationQueue() {
           <span>{selectedImageIds.length} kép kijelölve</span>
         </section>
       )}
-      <section className="share-grid ai-share-grid">
-        {products.map((product) => <AiQueueCard product={product} mode="queue" selectedImageIds={selectedImageIds} busy={bulkBusy || busyId === product.id} onToggleImage={(imageId) => setSelectedImageIds((current) => current.includes(imageId) ? current.filter((id) => id !== imageId) : [...current, imageId])} onFemale={() => generateSelectedImages(product, "female")} onMale={() => generateSelectedImages(product, "male")} onDelete={() => remove(product)} onArchive={(imageIds, value) => void setAiArchive(product, imageIds, value)} key={product.id} />)}
+      <section className="ai-queue-list">
+        {products.map((product) => <AiQueueCard product={product} mode="queue" selectedImageIds={selectedImageIds} busy={bulkBusy || busyId === product.id} onToggleImage={(imageId) => setSelectedImageIds((current) => current.includes(imageId) ? current.filter((id) => id !== imageId) : [...current, imageId])} onFemale={() => generateSelectedImages(product, "female")} onMale={() => generateSelectedImages(product, "male")} onFemaleAllSizes={() => generateAllSizes(product, "female")} onMaleAllSizes={() => generateAllSizes(product, "male")} onDelete={() => remove(product)} onArchive={(imageIds, value) => void setAiArchive(product, imageIds, value)} key={product.id} />)}
       </section>
       {products.length === 0 && <EmptyState title="Nincs AI-generálásra váró kép" />}
       <section className="panel ai-archive-panel">
         <button className="secondary icon-text" onClick={() => setArchiveOpen((value) => !value)}><FolderCheck size={19} /> AI-archívum ({archivedProducts.reduce((count, product) => count + productOriginalImages(product).filter((image) => image.aiArchived).length, 0)} kép)</button>
-        {archiveOpen && <div className="share-grid ai-share-grid">
-          {archivedProducts.map((product) => <AiQueueCard product={product} mode="archive" selectedImageIds={[]} busy={false} onToggleImage={() => undefined} onFemale={() => undefined} onMale={() => undefined} onDelete={() => remove(product)} onArchive={(imageIds, value) => void setAiArchive(product, imageIds, value)} key={product.id} />)}
+        {archiveOpen && <div className="ai-queue-list">
+          {archivedProducts.map((product) => <AiQueueCard product={product} mode="archive" selectedImageIds={[]} busy={false} onToggleImage={() => undefined} onFemale={() => undefined} onMale={() => undefined} onFemaleAllSizes={() => undefined} onMaleAllSizes={() => undefined} onDelete={() => remove(product)} onArchive={(imageIds, value) => void setAiArchive(product, imageIds, value)} key={product.id} />)}
           {archivedProducts.length === 0 && <p className="status-note">Az AI-archívum még üres.</p>}
         </div>}
       </section>
@@ -2589,33 +2845,28 @@ function AiGenerationQueue() {
   );
 }
 
-function AiQueueCard({ product, mode, selectedImageIds, busy, onToggleImage, onFemale, onMale, onDelete, onArchive }: { product: Product; mode: "queue" | "archive"; selectedImageIds: number[]; busy: boolean; onToggleImage: (imageId: number) => void; onFemale: () => void; onMale: () => void; onDelete: () => void; onArchive: (imageIds: number[], value: boolean) => void }) {
-  const [open, setOpen] = useState(false);
-  const originals = productOriginalImages(product).filter((image) => mode === "archive" ? image.aiArchived : imageNeedsAiGeneration(product, image));
+function AiQueueCard({ product, mode, selectedImageIds, busy, onToggleImage, onFemale, onMale, onFemaleAllSizes, onMaleAllSizes, onDelete, onArchive }: { product: Product; mode: "queue" | "archive"; selectedImageIds: number[]; busy: boolean; onToggleImage: (imageId: number) => void; onFemale: () => void; onMale: () => void; onFemaleAllSizes: () => void; onMaleAllSizes: () => void; onDelete: () => void; onArchive: (imageIds: number[], value: boolean) => void }) {
+  const originals = productOriginalImages(product).filter((image) => mode === "archive" ? image.aiArchived : imageEligibleForAi(image));
   const isMulti = originals.length > 1;
+  const hasMultipleSizes = productSizeOptions(product).length > 1;
   return (
-    <article className={`share-card ai-queue-card ${isMulti ? "multi-photo-card" : ""} ${open ? "share-card-open" : ""}`}>
-      <button className="share-card-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
-        <div className={`share-image-stack ${isMulti ? "multiple" : ""}`}>{originals.map((image, index) => {
-          return <div className={`ai-queue-image ${mode === "queue" && !selectedImageIds.includes(image.id) ? "image-excluded" : ""}`} key={image.id}>
-            <img src={imageUrl(image)} alt={`AI-generálásra vár ${product.displayNumber}, ${index + 1}. kép`} onClick={(event) => { event.stopPropagation(); if (mode === "queue") onToggleImage(image.id); }} />
-            <span>{mode === "archive" ? "AI-archívumban" : imageViewLabel(image.viewType)}</span>
-          </div>;
-        })}</div>
-        <span className="share-card-caption"><strong>#{product.displayNumber}</strong><span>{product.productName || product.productId}</span></span>
-      </button>
-      {open && <div className="publish-panel">
-        <h2>#{product.displayNumber}</h2>
-        <p className="status-note">{mode === "archive" ? "Az archívumban lévő képek megmaradnak, de nem kerülnek AI-generálásra." : "Koppints egy képre a kihagyásához; a beszürkült képek nem kerülnek AI-generálásra."}</p>
-        <dl><dt>Product ID</dt><dd>{product.productId}</dd><dt>Ár</dt><dd>{formatHuf(product.price)}</dd><dt>Méretek</dt><dd>{formatProductSizes(product)}</dd></dl>
-        <div className="big-action-grid">
-          {mode === "queue" && <><button className="primary icon-text" disabled={busy} onClick={onFemale}><Sparkles size={20} /> AI-generálás (Nő)</button>
-          <button className="secondary icon-text" disabled={busy} onClick={onMale}><Sparkles size={20} /> AI-generálás (Férfi)</button></>}
-          <button className="secondary icon-text" disabled={busy} onClick={() => onArchive(originals.map((image) => image.id), mode !== "archive")}><FolderCheck size={20} /> {mode === "archive" ? "Vissza az AI-listára" : "Teljes kártya archiválása"}</button>
-          {open && originals.map((image) => <button className="ghost" disabled={busy} onClick={() => onArchive([image.id], mode !== "archive")} key={`archive-${image.id}`}>{mode === "archive" ? "Kép visszaállítása" : "Kép archiválása"}: {imageViewLabel(image.viewType)}</button>)}
-          <button className="danger icon-text" disabled={busy} onClick={onDelete}><Trash2 size={20} /> Törlés</button>
-        </div>
-      </div>}
+    <article className={`ai-queue-row ${isMulti ? "multi-photo-row" : ""} ${mode === "archive" ? "ai-queue-archive-row" : ""}`}>
+      {mode === "queue" && <button className="icon-text ai-queue-action ai-female-generation" disabled={busy} onClick={onFemale}><Sparkles size={17} /> AI (Nő)</button>}
+      {mode === "queue" && <button className="icon-text ai-queue-action ai-male-generation" disabled={busy} onClick={onMale}><Sparkles size={17} /> AI(Férfi)</button>}
+      {mode === "queue" && <button className="icon-text ai-queue-action ai-size-generation ai-female-generation" disabled={busy || !hasMultipleSizes} onClick={onFemaleAllSizes} title={hasMultipleSizes ? "Minden megadott mérethez külön női modellképet készít." : "Ehhez legalább két különböző méret szükséges."}><Sparkles size={17} /> AI minden méretben (Nő)</button>}
+      {mode === "queue" && <button className="icon-text ai-queue-action ai-size-generation ai-male-generation" disabled={busy || !hasMultipleSizes} onClick={onMaleAllSizes} title={hasMultipleSizes ? "Minden megadott mérethez külön férfi modellképet készít." : "Ehhez legalább két különböző méret szükséges."}><Sparkles size={17} /> AI minden méretben (Férfi)</button>}
+      <button className="secondary icon-text ai-queue-action" disabled={busy} onClick={() => onArchive(originals.map((image) => image.id), mode !== "archive")}><FolderCheck size={17} /> {mode === "archive" ? "Visszaállítás" : "Archiválás"}</button>
+      <button className="danger icon-text ai-queue-action ai-row-delete" disabled={busy} onClick={onDelete}><Trash2 size={17} /> Törlés</button>
+      <div className="ai-queue-detail"><span>Product ID</span><strong title={product.productId}>{product.productId}</strong></div>
+      <div className="ai-queue-detail ai-queue-name"><span>Név</span><strong title={product.productName || product.productId}>#{product.displayNumber} {product.productName || product.productId}</strong></div>
+      <div className="ai-queue-detail"><span>Ár</span><strong>{formatHuf(product.price)}</strong></div>
+      <div className="ai-queue-detail ai-queue-sizes"><span>Méretek</span><strong>{formatProductSizes(product)}</strong></div>
+      <div className="ai-queue-images" aria-label={`${product.productName || product.productId} képei`}>
+        {originals.map((image, index) => <button type="button" className={`ai-queue-image ${mode === "queue" && !selectedImageIds.includes(image.id) ? "image-excluded" : ""}`} disabled={busy || mode === "archive"} onClick={() => mode === "queue" && onToggleImage(image.id)} key={image.id} aria-pressed={mode === "queue" ? selectedImageIds.includes(image.id) : undefined}>
+          <img src={imageUrl(image)} alt={`AI-generálásra vár ${product.displayNumber}, ${index + 1}. kép`} />
+          <span>{mode === "archive" ? "AI-archívumban" : imageViewLabel(image.viewType)}</span>
+        </button>)}
+      </div>
     </article>
   );
 }
@@ -2739,6 +2990,324 @@ function ShareCenter() {
         onDeleted={load}
       />
     </>
+  );
+}
+
+function ShareTestCenter() {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<ProductSort>("manual");
+  const [orderBusy, setOrderBusy] = useState(false);
+  const [draggedProductId, setDraggedProductId] = useState<number | null>(null);
+  const [dragOverProductId, setDragOverProductId] = useState<number | null>(null);
+  const [dragInsertAfter, setDragInsertAfter] = useState(false);
+  const [dragPreview, setDragPreview] = useState<{ x: number; y: number; width: number; offsetX: number; offsetY: number } | null>(null);
+  const productsRef = useRef<Product[]>([]);
+  const dropTargetRef = useRef<{ productId: number; insertAfter: boolean } | null>(null);
+
+  async function load() {
+    const [productRes, reservationRes] = await Promise.all([
+      api<{ products: Product[] }>("/api/products"),
+      api<{ reservations: Reservation[] }>("/api/reservations")
+    ]);
+    setProducts(productRes.products.filter((product) => productOriginalImages(product).length > 0));
+    setReservations(reservationRes.reservations.filter((reservation) => !reservation.cancelledAt));
+  }
+
+  useEffect(() => {
+    void load();
+  }, []);
+  useEffect(() => {
+    productsRef.current = products;
+  }, [products]);
+
+  async function toggleWebsite(product: Product) {
+    setBusyId(product.id);
+    setError("");
+    try {
+      const isOnWebsite = product.status === "APPROVED";
+      await api(`/api/products/${product.id}/${isOnWebsite ? "publish" : "approve"}`, { method: "POST" });
+      setMessage(isOnWebsite ? `#${product.displayNumber} elrejtve a felhasználói kínálatból.` : `#${product.displayNumber} megjelent a honlapon.`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "A honlapos állapot módosítása sikertelen.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function generate(product: Product, gender: ModelGender, everySize = false) {
+    const originals = productOriginalImages(product).filter(imageEligibleForAi);
+    const sizes = productSizeOptions(product);
+    const jobs = everySize
+      ? sizes.flatMap((size) => originals.filter((image) => imageNeedsSizeVariant(product, image, size, gender)).map((image) => ({ image, size })))
+      : originals.filter((image) => imageNeedsAiGeneration(product, image)).map((image) => ({ image, size: undefined }));
+    if (everySize && sizes.length < 2) {
+      setError("Minden méretben AI-képhez legalább két különböző méret szükséges.");
+      return;
+    }
+    if (!jobs.length) {
+      setMessage("Ehhez a termékhez a kiválasztott AI-változat már elkészült.");
+      return;
+    }
+    setBusyId(product.id);
+    setError("");
+    try {
+      for (const job of jobs) {
+        await api(`/api/products/${product.id}/generate`, {
+          method: "POST",
+          body: JSON.stringify({ gender, image_id: job.image.id, model_size: job.size })
+        });
+      }
+      setMessage(`#${product.displayNumber}: ${jobs.length} AI-kép elkészült.`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "AI-generálási hiba.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function remove(product: Product) {
+    if (await deleteProduct(product)) await load();
+  }
+
+  function applyProductOrder(next: Product[]) {
+    productsRef.current = next;
+    setProducts(next);
+  }
+
+  function moveProductInList(sourceId: number, targetId: number, insertAfter = false) {
+    const current = productsRef.current;
+    const sourceIndex = current.findIndex((product) => product.id === sourceId);
+    const targetIndex = current.findIndex((product) => product.id === targetId);
+    if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return current;
+    const next = [...current];
+    const [moved] = next.splice(sourceIndex, 1);
+    const nextTargetIndex = next.findIndex((product) => product.id === targetId);
+    next.splice(nextTargetIndex + (insertAfter ? 1 : 0), 0, moved);
+    applyProductOrder(next);
+    return next;
+  }
+
+  async function saveProductOrder(next: Product[]) {
+    setOrderBusy(true);
+    try {
+      const response = await api<{ products: Product[] }>("/api/products/order", { method: "PUT", body: JSON.stringify({ product_ids: next.map((product) => product.id), include_unpublished: true }) });
+      applyProductOrder(response.products.filter((product) => productOriginalImages(product).length > 0));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "A sorrend mentése sikertelen.");
+      await load();
+    } finally {
+      setOrderBusy(false);
+    }
+  }
+
+  async function moveProduct(productId: number, direction: -1 | 1) {
+    if (sort !== "manual" || query.trim() || orderBusy) return;
+    const current = productsRef.current;
+    const index = current.findIndex((product) => product.id === productId);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= current.length) return;
+    void saveProductOrder(moveProductInList(productId, current[target].id, direction === 1));
+  }
+
+  function startProductDrag(event: React.PointerEvent<HTMLButtonElement>, productId: number) {
+    if (sort !== "manual" || query.trim() || orderBusy) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const card = event.currentTarget.closest("article");
+    const rect = card?.getBoundingClientRect();
+    if (!rect) return;
+    setDraggedProductId(productId);
+    setDragOverProductId(productId);
+    setDragInsertAfter(false);
+    dropTargetRef.current = null;
+    setDragPreview({ x: rect.left, y: rect.top, width: Math.min(rect.width, window.innerWidth - 24), offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top });
+  }
+
+  function continueProductDrag(event: React.PointerEvent<HTMLButtonElement>, productId: number) {
+    if (draggedProductId !== productId || orderBusy) return;
+    setDragPreview((preview) => preview ? { ...preview, x: Math.max(12, Math.min(window.innerWidth - preview.width - 12, event.clientX - preview.offsetX)), y: Math.max(12, Math.min(window.innerHeight - 72, event.clientY - preview.offsetY)) } : preview);
+    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-share-test-product-id]");
+    const targetId = Number(target?.dataset.shareTestProductId);
+    if (!Number.isInteger(targetId)) return;
+    const rect = target!.getBoundingClientRect();
+    const insertAfter = event.clientY > rect.top + rect.height / 2;
+    setDragOverProductId(targetId);
+    setDragInsertAfter(insertAfter);
+    dropTargetRef.current = targetId === productId ? null : { productId: targetId, insertAfter };
+  }
+
+  function finishProductDrag(productId: number) {
+    if (draggedProductId !== productId) return;
+    const target = dropTargetRef.current;
+    const next = target ? moveProductInList(productId, target.productId, target.insertAfter) : productsRef.current;
+    setDraggedProductId(null);
+    setDragOverProductId(null);
+    setDragInsertAfter(false);
+    setDragPreview(null);
+    dropTargetRef.current = null;
+    void saveProductOrder(next);
+  }
+
+  const visibleProducts = filterAndSortProducts(products, query, sort);
+
+  return (
+    <>
+      <header className="topbar"><h1>Megosztás (teszt)</h1></header>
+      <section className="panel share-test-intro">
+        <strong>Egységes termékkezelés</strong>
+        <span>Az eredeti, AI-generált és többfotós képek termékenként, egy helyen kezelhetők.</span>
+      </section>
+      {error && <p className="error">{error}</p>}
+      {message && <p className="success">{message}</p>}
+      <ProductListTools query={query} onQueryChange={setQuery} sort={sort} onSortChange={setSort} />
+      {draggedProductId !== null && dragPreview && (() => {
+        const product = productsRef.current.find((candidate) => candidate.id === draggedProductId);
+        const image = product ? productDisplayImage(product) : undefined;
+        return product ? <div className="offering-drag-preview" style={{ left: dragPreview.x, top: dragPreview.y, width: dragPreview.width }} aria-hidden="true">
+          <img src={imageUrl(image)} alt="" />
+          <strong>#{product.displayNumber} {product.productName || "Névtelen termék"}</strong>
+          <span>{formatHuf(product.price)}</span>
+          <span>{formatProductSizes(product)}</span>
+        </div> : null;
+      })()}
+      <div className="share-test-column-headings" aria-hidden="true">
+        <span></span>
+        <span>Sorrend</span>
+        <span>Product ID</span>
+        <span>Preview</span>
+        <span>Megnevezés</span>
+        <span>Ár</span>
+        <span>Szín</span>
+        <span>Méretek</span>
+        <span>Foglalható eddig</span>
+        <span>Foglalások</span>
+        <span></span>
+      </div>
+      <section className="share-test-list">
+        {visibleProducts.map((product, index) => {
+          const productReservations = reservations.filter((reservation) => reservation.productFk === product.id);
+          const reservedCount = productReservations.reduce((sum, reservation) => sum + reservation.quantity, 0);
+          const showDropBefore = draggedProductId !== null && draggedProductId !== product.id && dragOverProductId === product.id && !dragInsertAfter;
+          const showDropAfter = draggedProductId !== null && draggedProductId !== product.id && dragOverProductId === product.id && dragInsertAfter;
+          return <Fragment key={product.id}>
+            {showDropBefore && <div className="share-test-drop-indicator">Ide kerül a termék</div>}
+            <ShareTestProductRow
+            key={product.id}
+            product={product}
+            order={sort === "manual" ? products.length - index : index + 1}
+            reservedCount={reservedCount}
+            reservedValue={reservedCount * product.price}
+            reservations={productReservations}
+            busy={busyId === product.id}
+            onToggleWebsite={() => void toggleWebsite(product)}
+            onGenerate={(gender, everySize) => void generate(product, gender, everySize)}
+            onDelete={() => void remove(product)}
+            onSaved={load}
+            onMove={(direction) => void moveProduct(product.id, direction)}
+            canMoveUp={sort === "manual" && !query.trim() && !orderBusy && products[0]?.id !== product.id}
+            canMoveDown={sort === "manual" && !query.trim() && !orderBusy && products[products.length - 1]?.id !== product.id}
+            onDragStart={(event) => startProductDrag(event, product.id)}
+            onDragMove={(event) => continueProductDrag(event, product.id)}
+            onDragEnd={() => finishProductDrag(product.id)}
+            draggable={sort === "manual" && !query.trim() && !orderBusy}
+            dragging={draggedProductId === product.id}
+            dropTarget={dragOverProductId === product.id && draggedProductId !== product.id}
+            insertAfter={dragInsertAfter}
+          />
+            {showDropAfter && <div className="share-test-drop-indicator">Ide kerül a termék</div>}
+          </Fragment>;
+        })}
+      </section>
+      {visibleProducts.length === 0 && <EmptyState title={query ? "Nincs találat a keresésre." : "Még nincs feltöltött termék a tesztmegosztáshoz."} />}
+    </>
+  );
+}
+
+function ShareTestProductRow({ product, order, reservedCount, reservedValue, reservations, busy, onToggleWebsite, onGenerate, onDelete, onSaved, onMove, canMoveUp, canMoveDown, onDragStart, onDragMove, onDragEnd, draggable, dragging, dropTarget, insertAfter }: {
+  product: Product;
+  order: number;
+  reservedCount: number;
+  reservedValue: number;
+  reservations: Reservation[];
+  busy: boolean;
+  onToggleWebsite: () => void;
+  onGenerate: (gender: ModelGender, everySize: boolean) => void;
+  onDelete: () => void;
+  onSaved: () => void;
+  onMove: (direction: -1 | 1) => void;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onDragStart: (event: React.PointerEvent<HTMLButtonElement>) => void;
+  onDragMove: (event: React.PointerEvent<HTMLButtonElement>) => void;
+  onDragEnd: () => void;
+  draggable: boolean;
+  dragging: boolean;
+  dropTarget: boolean;
+  insertAfter: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [open, setOpen] = useState(false);
+  const isOnWebsite = product.status === "APPROVED";
+  const hasMultipleSizes = productSizeOptions(product).length > 1;
+  const originalImage = productOriginalImage(product);
+  const generatedImage = productGeneratedImage(product);
+  return (
+    <article data-share-test-product-id={product.id} className={`share-test-product ${productOriginalImages(product).length > 1 ? "share-test-multi" : ""} ${isOnWebsite ? "share-test-on-website" : "share-test-off-website"} ${open ? "share-test-open" : "share-test-closed"}${dragging ? " share-test-dragging" : ""}${dropTarget ? ` share-test-drop-target ${insertAfter ? "share-test-drop-after" : "share-test-drop-before"}` : ""}`}>
+      <div className="share-test-order-controls" aria-label={`#${product.displayNumber} sorrendje`}>
+        <button type="button" className="sort-control" disabled={!canMoveUp} onClick={() => onMove(-1)} aria-label="Felrébb sorolás"><ArrowUp size={16} /></button>
+        <button type="button" className="sort-control sort-drag-control" disabled={!draggable} onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragEnd} aria-label="Termék sorrendjének húzása"><GripVertical size={16} /></button>
+        <button type="button" className="sort-control" disabled={!canMoveDown} onClick={() => onMove(1)} aria-label="Lejjebb sorolás"><ArrowDown size={16} /></button>
+      </div>
+      <button className="share-test-preview" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+        <div className="share-test-summary">
+          <div><span>Sorrend</span><strong>{order}.</strong></div>
+          <div><span>Product ID</span><strong title={product.productId}>{product.productId}</strong></div>
+          <div className="share-test-inline-images" aria-label="Termékképek előnézete">
+            <span>{originalImage && <img src={imageUrl(originalImage)} alt="Eredeti termékkép" />}</span>
+            <span>{generatedImage && <img src={imageUrl(generatedImage)} alt="AI-generált termékkép" />}</span>
+          </div>
+          <div className="share-test-name"><span>Megnevezés</span><strong title={product.productName || product.productId}>#{product.displayNumber} {product.productName || product.productId}</strong></div>
+          <div><span>Ár</span><strong>{formatHuf(product.price)}</strong></div>
+          <div><span>Szín</span><strong>{productColors(product).join(", ") || "-"}</strong></div>
+          <div className="share-test-preview-sizes share-test-size-detail"><span>Méretek</span><strong><ProductSizeList product={product} /></strong></div>
+          <div><span>Foglalható eddig</span><strong>{formatReservationDeadline(product.reservableUntil)}</strong></div>
+          <div><span>Foglalások</span><strong>{reservedCount} db, {formatHuf(reservedValue)}</strong></div>
+        </div>
+        <span className="share-test-preview-toggle">{open ? "Becsukás" : "Megnyitás"}</span>
+      </button>
+      {open && <>
+      <div className="share-test-toolbar">
+        <button className={`share-test-status ${isOnWebsite ? "on" : "off"}`} disabled={busy} onClick={onToggleWebsite}>Státusz: {isOnWebsite ? "Honlapon" : "Nincs honlapon"}</button>
+        <button className="secondary" disabled={busy} onClick={() => setEditing((value) => !value)}>Módosítás</button>
+        <button className="ai-female-generation" disabled={busy} onClick={() => onGenerate("female", false)}>AI (Nő)</button>
+        <button className="ai-male-generation" disabled={busy} onClick={() => onGenerate("male", false)}>AI (Férfi)</button>
+        <button className="ai-female-generation ai-size-generation" disabled={busy || !hasMultipleSizes} onClick={() => onGenerate("female", true)}>AI minden méretben (Nő)</button>
+        <button className="ai-male-generation ai-size-generation" disabled={busy || !hasMultipleSizes} onClick={() => onGenerate("male", true)}>AI minden méretben (Férfi)</button>
+        <button className="danger" disabled={busy} onClick={onDelete}>Törlés</button>
+      </div>
+      <ImageVisibilityEditor product={product} onSaved={onSaved} />
+      <section className="share-test-reservation-summary">
+        <div>
+          <strong>Foglalási összefoglaló</strong>
+          <span>Összesen: {reservedCount} db, {formatHuf(reservedValue)}</span>
+        </div>
+        {reservations.length ? <ul>
+          {reservations.map((reservation) => <li key={reservation.id}>
+            <strong>{reservation.user?.username ?? "Ismeretlen felhasználó"}</strong>
+            <span>{reservation.color ? `${reservation.color}, ` : ""}{reservation.size}: {reservation.quantity} db</span>
+          </li>)}
+        </ul> : <p>Még nincs foglalás ehhez a termékhez.</p>}
+      </section>
+      {editing && <ProductEditForm product={product} onSaved={() => { setEditing(false); onSaved(); }} />}
+      </>}
+    </article>
   );
 }
 
@@ -3043,16 +3612,29 @@ function CurrentOfferings() {
   const [products, setProducts] = useState<Product[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [draggedProductId, setDraggedProductId] = useState<number | null>(null);
+  const [dragOverProductId, setDragOverProductId] = useState<number | null>(null);
+  const [dragInsertAfter, setDragInsertAfter] = useState(false);
+  const [dragPreview, setDragPreview] = useState<{ x: number; y: number; width: number; offsetX: number; offsetY: number } | null>(null);
+  const [reorderBusy, setReorderBusy] = useState(false);
   const [bulkDeadline, setBulkDeadline] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkMessage, setBulkMessage] = useState("");
   const [bulkError, setBulkError] = useState("");
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<ProductSort>("manual");
+  const productsRef = useRef<Product[]>([]);
+  const dropTargetRef = useRef<{ productId: number; insertAfter: boolean } | null>(null);
+  const offeringProducts = (items: Product[]) => items.filter((product) => (product.status === "APPROVED" || product.status === "PUBLISHED") && productDisplayImage(product));
+  useEffect(() => {
+    productsRef.current = products;
+  }, [products]);
   async function load() {
     const [productRes, reservationRes] = await Promise.all([
-      api<{ products: Product[] }>("/api/products?status=APPROVED"),
+      api<{ products: Product[] }>("/api/products"),
       api<{ reservations: Reservation[] }>("/api/reservations")
     ]);
-    setProducts(productRes.products.filter((product) => productDisplayImage(product)));
+    setProducts(offeringProducts(productRes.products));
     setReservations(reservationRes.reservations);
   }
   useEffect(() => {
@@ -3064,6 +3646,109 @@ function CurrentOfferings() {
   async function downloadCurrentImage(product: Product) {
     const image = productDisplayImage(product);
     if (image) await downloadProductImage(product, image, productGeneratedImage(product) ? "generated" : "raw");
+  }
+  async function toggleProductVisibility(product: Product) {
+    const isHidden = product.status === "PUBLISHED";
+    await api(`/api/products/${product.id}/${isHidden ? "approve" : "publish"}`, { method: "POST" });
+    await load();
+  }
+  function applyProductOrder(next: Product[]) {
+    productsRef.current = next;
+    setProducts(next);
+  }
+  function moveProductInList(sourceId: number, targetId: number, insertAfter = false) {
+    const current = productsRef.current;
+    const from = current.findIndex((product) => product.id === sourceId);
+    const to = current.findIndex((product) => product.id === targetId);
+    if (from < 0 || to < 0 || from === to) return current;
+    const next = [...current];
+    const [moved] = next.splice(from, 1);
+    const targetIndex = next.findIndex((product) => product.id === targetId);
+    next.splice(targetIndex + (insertAfter ? 1 : 0), 0, moved);
+    applyProductOrder(next);
+    return next;
+  }
+  async function saveProductOrder(next: Product[]) {
+    setReorderBusy(true);
+    setBulkError("");
+    try {
+      const response = await api<{ products: Product[] }>("/api/products/order", {
+        method: "PUT",
+        body: JSON.stringify({ product_ids: next.map((product) => product.id) })
+      });
+      applyProductOrder(offeringProducts(response.products));
+    } catch (err) {
+      setBulkError(err instanceof Error ? err.message : "A kínálati sorrend mentése sikertelen.");
+      await load();
+    } finally {
+      setReorderBusy(false);
+    }
+  }
+  function moveProductBy(productId: number, direction: -1 | 1) {
+    const current = productsRef.current;
+    const index = current.findIndex((product) => product.id === productId);
+    const targetIndex = index + direction;
+    if (index < 0 || targetIndex < 0 || targetIndex >= current.length || reorderBusy) return;
+    const next = moveProductInList(productId, current[targetIndex].id, direction === 1);
+    void saveProductOrder(next);
+  }
+  function startProductDrag(event: React.PointerEvent<HTMLButtonElement>, productId: number) {
+    if (reorderBusy) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const row = event.currentTarget.closest("tr");
+    const rect = row?.getBoundingClientRect();
+    if (!rect) return;
+    setDraggedProductId(productId);
+    setDragOverProductId(productId);
+    setDragInsertAfter(false);
+    dropTargetRef.current = null;
+    setDragPreview({
+      x: rect.left,
+      y: rect.top,
+      width: Math.min(rect.width, window.innerWidth - 24),
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top
+    });
+  }
+  function continueProductDrag(event: React.PointerEvent<HTMLButtonElement>, productId: number) {
+    if (draggedProductId !== productId || reorderBusy) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setDragPreview((preview) => preview ? {
+      ...preview,
+      x: Math.max(12, Math.min(window.innerWidth - preview.width - 12, event.clientX - preview.offsetX)),
+      y: Math.max(12, Math.min(window.innerHeight - 72, event.clientY - preview.offsetY))
+    } : preview);
+    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-offering-product-id]");
+    const targetId = Number(target?.dataset.offeringProductId);
+    if (Number.isInteger(targetId)) {
+      const rect = target!.getBoundingClientRect();
+      const insertAfter = event.clientY > rect.top + rect.height / 2;
+      setDragOverProductId(targetId);
+      setDragInsertAfter(insertAfter);
+      dropTargetRef.current = targetId === productId ? null : { productId: targetId, insertAfter };
+    }
+  }
+  function finishProductDrag(productId: number) {
+    if (draggedProductId !== productId) return;
+    const target = dropTargetRef.current;
+    const next = target ? moveProductInList(productId, target.productId, target.insertAfter) : productsRef.current;
+    setDraggedProductId(null);
+    setDragOverProductId(null);
+    setDragInsertAfter(false);
+    setDragPreview(null);
+    dropTargetRef.current = null;
+    void saveProductOrder(next);
+  }
+  function cancelProductDrag() {
+    setDraggedProductId(null);
+    setDragOverProductId(null);
+    setDragInsertAfter(false);
+    setDragPreview(null);
+    dropTargetRef.current = null;
+    void load();
   }
   async function updateAllDeadlines(event: React.FormEvent) {
     event.preventDefault();
@@ -3079,7 +3764,7 @@ function CurrentOfferings() {
         method: "PATCH",
         body: JSON.stringify({ reservable_until: new Date(bulkDeadline).toISOString() })
       });
-      setProducts(res.products.filter((product) => productDisplayImage(product)));
+      setProducts(offeringProducts(res.products));
       setBulkMessage(`${res.count} élő termék foglalási határideje frissült.`);
       setBulkDeadline("");
     } catch (err) {
@@ -3088,6 +3773,7 @@ function CurrentOfferings() {
       setBulkBusy(false);
     }
   }
+  const visibleProducts = filterAndSortProducts(products, query, sort);
   return (
     <>
       <header className="topbar"><h1>Jelenlegi kínálat</h1></header>
@@ -3108,7 +3794,20 @@ function CurrentOfferings() {
         {bulkError && <p className="error">{bulkError}</p>}
         {bulkMessage && <p className="success">{bulkMessage}</p>}
       </section>
+      {draggedProductId !== null && dragPreview && (() => {
+        const product = productsRef.current.find((candidate) => candidate.id === draggedProductId);
+        const image = product ? productDisplayImage(product) : undefined;
+        return product ? (
+          <div className="offering-drag-preview" style={{ left: dragPreview.x, top: dragPreview.y, width: dragPreview.width }} aria-hidden="true">
+            <img src={imageUrl(image)} alt="" />
+            <strong>#{product.displayNumber} {product.productName || "Névtelen termék"}</strong>
+            <span>{formatHuf(product.price)}</span>
+            <span>{formatProductSizes(product)}</span>
+          </div>
+        ) : null;
+      })()}
       <section className="panel">
+        <ProductListTools query={query} onQueryChange={setQuery} sort={sort} onSortChange={setSort} />
         <div className="table-wrap">
           <table>
             <thead>
@@ -3126,17 +3825,26 @@ function CurrentOfferings() {
               </tr>
             </thead>
             <tbody>
-              {products.length ? products.map((product) => {
+              {visibleProducts.length ? visibleProducts.map((product) => {
                 const image = productDisplayImage(product);
                 const productReservations = reservationsForProduct(product.id);
                 const reservedCount = productReservations.reduce((sum, reservation) => sum + reservation.quantity, 0);
+                const isHidden = product.status === "PUBLISHED";
+                const showDropBefore = draggedProductId !== null && draggedProductId !== product.id && dragOverProductId === product.id && !dragInsertAfter;
+                const showDropAfter = draggedProductId !== null && draggedProductId !== product.id && dragOverProductId === product.id && dragInsertAfter;
                 return (
                   <Fragment key={product.id}>
+                    {showDropBefore && <tr className="offering-drop-indicator"><td colSpan={10}><div>Ide kerül a termék</div></td></tr>}
                     <tr
-                      className={`${productOriginalImages(product).length > 1 ? "multi-offering-row " : ""}offering-row-clickable`}
+                      className={`${productOriginalImages(product).length > 1 ? "multi-offering-row " : ""}offering-row-clickable${isHidden ? " offering-row-hidden" : ""}${draggedProductId === product.id ? " offering-row-dragging" : ""}${dragOverProductId === product.id && draggedProductId !== product.id ? ` offering-row-drop-target ${dragInsertAfter ? "offering-row-drop-after" : "offering-row-drop-before"}` : ""}`}
+                      data-offering-product-id={product.id}
                       onClick={() => setEditingId(editingId === product.id ? null : product.id)}
                     >
-                      <td><img className="table-thumb" src={imageUrl(image)} alt={`Termék ${product.displayNumber}`} /></td>
+                      <td>
+                        <div className="offering-image-controls">
+                          <img className="table-thumb" src={imageUrl(image)} alt={`Termék ${product.displayNumber}`} />
+                        </div>
+                      </td>
                       <td>#{product.displayNumber}</td>
                       <td>{product.productName || "-"}</td>
                       <td>{formatHuf(product.price)}</td>
@@ -3156,10 +3864,14 @@ function CurrentOfferings() {
                       <td>
                         <div className="table-actions">
                           <button className="secondary table-action-btn" onClick={(event) => { event.stopPropagation(); void downloadCurrentImage(product); }}>Letöltés</button>
+                          <button className={`secondary table-action-btn${isHidden ? "" : " hide-product-btn"}`} onClick={(event) => { event.stopPropagation(); void toggleProductVisibility(product); }}>
+                            {isHidden ? "Megjelenítés" : "Elrejtés"}
+                          </button>
                           <button className="danger table-action-btn" onClick={async (event) => { event.stopPropagation(); if (await deleteProduct(product)) await load(); }}>Törlés</button>
                         </div>
                       </td>
                     </tr>
+                    {showDropAfter && <tr className="offering-drop-indicator"><td colSpan={10}><div>Ide kerül a termék</div></td></tr>}
                     {editingId === product.id && (
                       <tr>
                         <td colSpan={10}>
@@ -3170,7 +3882,7 @@ function CurrentOfferings() {
                   </Fragment>
                 );
               }) : (
-                <tr><td colSpan={10} className="empty-table-cell">Még nincs honlapon megjelenő tétel.</td></tr>
+                <tr><td colSpan={10} className="empty-table-cell">{query ? "Nincs találat a keresésre." : "Még nincs honlapon megjelenő tétel."}</td></tr>
               )}
             </tbody>
           </table>

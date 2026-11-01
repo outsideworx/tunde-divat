@@ -16,7 +16,7 @@ const envSchema = z.object({
   MAX_UPLOAD_MB: z.coerce.number().int().positive().default(12),
   AI_PROVIDER: z.enum(["mock", "openai"]).default("mock"),
   OPENAI_API_KEY: z.string().optional(),
-  OPENAI_IMAGE_MODEL: z.string().default("gpt-image-1")
+  OPENAI_IMAGE_MODEL: z.string().default("gpt-image-2")
 });
 
 export const env = envSchema.parse(process.env);
